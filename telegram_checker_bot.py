@@ -34,7 +34,12 @@ SUPABASE_KEY = os.getenv("SUPABASE_KEY", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.e
 PORT = int(os.getenv("PORT", "10000"))
 
 # Initialize Supabase client
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+try:
+    supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+    logger.info("Supabase client initialized successfully")
+except Exception as e:
+    logger.error(f"Failed to initialize Supabase client: {e}")
+    supabase = None
 
 # Set up logging
 logging.basicConfig(
@@ -306,6 +311,10 @@ Examples:
 # Database functions
 async def init_database():
     """Initialize database tables"""
+    if not supabase:
+        logger.error("Supabase client not initialized")
+        return
+        
     try:
         # Create users table
         supabase.table('users').select('*').limit(1).execute()
@@ -321,6 +330,9 @@ async def init_database():
 
 async def get_user_language(user_id: int) -> str:
     """Get user's preferred language from database"""
+    if not supabase:
+        return 'en'  # Default to English if no database
+        
     try:
         result = supabase.table('users').select('language').eq('user_id', user_id).execute()
         if result.data:
@@ -331,6 +343,10 @@ async def get_user_language(user_id: int) -> str:
 
 async def set_user_language(user_id: int, language: str):
     """Set user's preferred language in database"""
+    if not supabase:
+        logger.warning("Supabase not available, language not saved")
+        return
+        
     try:
         # Upsert user language
         supabase.table('users').upsert({
@@ -346,6 +362,9 @@ async def check_user_access(user_id: int) -> bool:
     if user_id == ADMIN_USER_ID:
         return True
     
+    if not supabase:
+        return True  # Allow access if database is not available
+    
     try:
         result = supabase.table('users').select('access_status').eq('user_id', user_id).execute()
         if result.data:
@@ -356,6 +375,9 @@ async def check_user_access(user_id: int) -> bool:
 
 async def get_pending_request(user_id: int) -> dict:
     """Get user's pending request if any"""
+    if not supabase:
+        return None
+        
     try:
         result = supabase.table('access_requests').select('*').eq('user_id', user_id).eq('status', 'pending').execute()
         if result.data:
@@ -366,6 +388,9 @@ async def get_pending_request(user_id: int) -> dict:
 
 async def check_request_cooldown(user_id: int) -> int:
     """Check if user is in cooldown period, returns hours remaining"""
+    if not supabase:
+        return 0
+        
     try:
         result = supabase.table('access_requests').select('created_at').eq('user_id', user_id).order('created_at', desc=True).limit(1).execute()
         if result.data:
@@ -380,6 +405,10 @@ async def check_request_cooldown(user_id: int) -> int:
 
 async def create_access_request(user_id: int, username: str, first_name: str, language: str):
     """Create new access request"""
+    if not supabase:
+        logger.warning("Supabase not available, request not saved")
+        return False
+        
     try:
         supabase.table('access_requests').insert({
             'user_id': user_id,
@@ -396,6 +425,10 @@ async def create_access_request(user_id: int, username: str, first_name: str, la
 
 async def update_access_request(request_id: int, status: str):
     """Update access request status"""
+    if not supabase:
+        logger.warning("Supabase not available, request status not updated")
+        return False
+        
     try:
         supabase.table('access_requests').update({
             'status': status,
@@ -1092,13 +1125,14 @@ async def handle_admin_callback(update: Update, context: ContextTypes.DEFAULT_TY
         if success:
             # Get user info to send notification
             try:
-                request_info = supabase.table('access_requests').select('user_id').eq('id', request_id).execute()
-                if request_info.data:
-                    user_id = request_info.data[0]['user_id']
-                    await context.bot.send_message(
-                        chat_id=user_id,
-                        text=await get_text(user_id, 'access_approved')
-                    )
+                if supabase:
+                    request_info = supabase.table('access_requests').select('user_id').eq('id', request_id).execute()
+                    if request_info.data:
+                        user_id = request_info.data[0]['user_id']
+                        await context.bot.send_message(
+                            chat_id=user_id,
+                            text=await get_text(user_id, 'access_approved')
+                        )
                     
                     # Send new keyboard to user
                     keyboard = await get_main_menu_keyboard(user_id)
@@ -1121,13 +1155,14 @@ async def handle_admin_callback(update: Update, context: ContextTypes.DEFAULT_TY
         if success:
             # Get user info to send notification
             try:
-                request_info = supabase.table('access_requests').select('user_id').eq('id', request_id).execute()
-                if request_info.data:
-                    user_id = request_info.data[0]['user_id']
-                    await context.bot.send_message(
-                        chat_id=user_id,
-                        text=await get_text(user_id, 'access_rejected')
-                    )
+                if supabase:
+                    request_info = supabase.table('access_requests').select('user_id').eq('id', request_id).execute()
+                    if request_info.data:
+                        user_id = request_info.data[0]['user_id']
+                        await context.bot.send_message(
+                            chat_id=user_id,
+                            text=await get_text(user_id, 'access_rejected')
+                        )
             except Exception as e:
                 logger.error(f"Error notifying user: {e}")
             
