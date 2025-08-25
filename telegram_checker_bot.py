@@ -391,7 +391,7 @@ async def check_user_access(user_id: int) -> bool:
     
     if supabase:
         try:
-            result = supabase.table('users').select('access_status').eq('user_id', user_id).execute()
+            result = supabase.table('users').select('access_status').eq('id', user_id).execute()
             if result.data:
                 return result.data[0]['access_status'] == 'approved'
         except:
@@ -1275,21 +1275,22 @@ async def main():
     
     # Initialize checker if API credentials are provided
     checker = None
-    # Enable phone checking for admin user (7325836764)
-    if API_ID != "YOUR_API_ID" and API_HASH != "YOUR_API_HASH":
+    logger.info("Initializing phone checking service...")
+    
+    if API_ID and API_HASH and API_ID != "YOUR_API_ID" and API_HASH != "YOUR_API_HASH":
         try:
             checker = TelegramChecker(API_ID, API_HASH)
             success = await checker.initialize_client()
             if success:
-                logger.info("Phone checking enabled successfully!")
+                logger.info("✅ Phone checking enabled successfully!")
             else:
-                logger.warning("Phone checking disabled - authentication failed")
+                logger.warning("⚠️ Phone checking disabled - authentication failed")
                 checker = None
         except Exception as e:
-            logger.warning(f"Phone checking disabled - {e}")
+            logger.warning(f"⚠️ Phone checking disabled - {e}")
             checker = None
     else:
-        logger.info("Phone checking disabled - API credentials not configured")
+        logger.info("ℹ️ Phone checking disabled - API credentials not configured")
     
     # Create application
     application = Application.builder().token(BOT_TOKEN).build()
