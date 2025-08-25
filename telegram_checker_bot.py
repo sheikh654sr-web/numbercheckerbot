@@ -529,11 +529,15 @@ class TelegramChecker:
     async def initialize_client(self):
         """Initialize Telethon client"""
         try:
-            self.client = TelegramClient('session', self.api_id, self.api_hash)
+            # Use in-memory session for deployment
+            from telethon.sessions import StringSession
+            self.client = TelegramClient(StringSession(), self.api_id, self.api_hash)
             await self.client.start()
             logger.info("Telethon client initialized successfully")
+            return True
         except Exception as e:
             logger.error(f"Failed to initialize Telethon client: {e}")
+            self.client = None
             return False
         return True
     
@@ -1019,7 +1023,7 @@ async def check_phone_numbers(update: Update, context: ContextTypes.DEFAULT_TYPE
     
     try:
         if not checker or not checker.client:
-            await processing_msg.edit_text(await get_text(user_id, 'api_error'))
+            await processing_msg.edit_text("❌ Phone checking service not available. Please contact admin.")
             return
         
         # Check phone numbers
@@ -1212,7 +1216,11 @@ async def main():
     # Initialize checker if API credentials are provided
     if API_ID != "YOUR_API_ID" and API_HASH != "YOUR_API_HASH":
         checker = TelegramChecker(API_ID, API_HASH)
-        await checker.initialize_client()
+        success = await checker.initialize_client()
+        if not success:
+            logger.warning("Telethon client initialization failed, phone checking will be disabled")
+    else:
+        logger.warning("Telegram API credentials not provided")
     
     # Create application
     application = Application.builder().token(BOT_TOKEN).build()

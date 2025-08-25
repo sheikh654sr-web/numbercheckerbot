@@ -47,7 +47,12 @@ def run_flask():
 
 def run_bot_thread():
     """Run bot in separate thread"""
-    asyncio.run(run_bot())
+    try:
+        # Import here to avoid circular imports
+        from telegram_checker_bot import main
+        asyncio.run(main())
+    except Exception as e:
+        print(f"Error starting bot: {e}")
 
 if __name__ == '__main__':
     # Start bot in background thread
