@@ -10,7 +10,7 @@ import os
 # Add current directory to path
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-from telegram_checker_bot import run_bot
+from telegram_checker_bot import main
 
 if __name__ == '__main__':
     print("🤖 Starting Telegram Number Checker Bot...")
@@ -19,7 +19,7 @@ if __name__ == '__main__':
     print("-" * 50)
     
     try:
-        run_bot()
+        asyncio.run(main())
     except KeyboardInterrupt:
         print("\n🛑 Bot stopped by user")
     except Exception as e:

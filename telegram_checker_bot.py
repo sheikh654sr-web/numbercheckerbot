@@ -1260,90 +1260,43 @@ async def main():
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     application.add_handler(CallbackQueryHandler(handle_admin_callback))
     
-    # Initialize and start the bot
-    logger.info("Starting Telegram Number Checker Bot...")
+    # Initialize and start the bot (Simple polling like working bot)
+    logger.info("🤖 Telegram Number Checker Bot starting...")
     try:
-        # Check if running in deployment (with PORT env var)
-        port = os.getenv('PORT')
-        if port:
-            # Deployment mode: Use webhook
-            webhook_url = f"https://numbercheckerbot-1.onrender.com/webhook"
-            logger.info(f"Setting up webhook: {webhook_url}")
-            
-            # Initialize and start the application
-            await application.initialize()
-            await application.start()
-            
-            # Set webhook
-            try:
-                await application.bot.set_webhook(url=webhook_url)
-                logger.info("Webhook set successfully")
-                
-                # Verify webhook is set
-                webhook_info = await application.bot.get_webhook_info()
-                logger.info(f"Webhook info: {webhook_info.url}")
-                
-            except Exception as e:
-                logger.error(f"Failed to set webhook: {e}")
-            
-            # Keep running
-            logger.info("Bot is running in webhook mode...")
-            logger.info("Bot is ready to receive messages!")
-            try:
-                while True:
-                    await asyncio.sleep(10)  # Check every 10 seconds
-            except KeyboardInterrupt:
-                logger.info("Stopping bot...")
-                await application.stop()
-        else:
-            # Local mode: Use polling
-            logger.info("Running in polling mode")
-            await application.start()
-            await application.updater.start_polling()
-            
-            # Keep the bot running
-            logger.info("Bot is running... Press Ctrl+C to stop")
-            try:
-                # Run until interrupted
-                import signal
-                stop_event = asyncio.Event()
-                
-                def signal_handler():
-                    logger.info("Received stop signal")
-                    stop_event.set()
-                
-                # Set up signal handlers
-                if hasattr(signal, 'SIGINT'):
-                    signal.signal(signal.SIGINT, lambda s, f: signal_handler())
-                if hasattr(signal, 'SIGTERM'):
-                    signal.signal(signal.SIGTERM, lambda s, f: signal_handler())
-                
-                # Wait for stop signal
-                await stop_event.wait()
-                
-            except KeyboardInterrupt:
-                logger.info("Received KeyboardInterrupt")
-            
-            # Stop the bot
-            logger.info("Stopping bot...")
-            await application.updater.stop()
-            await application.stop()
+        # Start the bot with polling (like successful bot)
+        await application.initialize()
+        await application.start()
+        await application.updater.start_polling()
+        
+        logger.info("✅ Telegram Number Checker Bot is running!")
+        
+        # Keep running until interrupted
+        try:
+            while True:
+                await asyncio.sleep(1)
+        except KeyboardInterrupt:
+            logger.info("Bot stopped by user")
         
     except Exception as e:
         logger.error(f"Error running bot: {e}")
     finally:
-        # Shutdown the application
+        # Cleanup
+        logger.info("Shutting down bot...")
         try:
-            await application.shutdown()
+            await application.updater.stop()
+            await application.stop()
         except:
             pass
         
-        # Disconnect Telethon client
-        if checker and checker.client:
+        if checker:
             try:
                 await checker.client.disconnect()
             except:
                 pass
+
+if __name__ == "__main__":
+    import asyncio
+    asyncio.run(main())
 
 def run_bot():
     """Run the bot with proper event loop handling"""

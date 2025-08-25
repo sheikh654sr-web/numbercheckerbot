@@ -95,19 +95,6 @@ def run_flask():
     port = int(os.getenv('PORT', 10000))
     app.run(host='0.0.0.0', port=port, debug=False)
 
-def run_bot_thread():
-    """Run bot in separate thread"""
-    try:
-        # Import here to avoid circular imports
-        from telegram_checker_bot import main
-        asyncio.run(main())
-    except Exception as e:
-        print(f"Error starting bot: {e}")
-
 if __name__ == '__main__':
-    # Start bot in background thread
-    bot_thread = threading.Thread(target=run_bot_thread, daemon=True)
-    bot_thread.start()
-    
-    # Start Flask server in main thread
+    # Start Flask server directly (bot runs separately)
     run_flask()
