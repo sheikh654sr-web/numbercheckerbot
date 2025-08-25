@@ -543,25 +543,37 @@ class TelegramChecker:
             if session_string:
                 # Use existing session string
                 self.client = TelegramClient(StringSession(session_string), self.api_id, self.api_hash)
+                await self.client.start()
+                logger.info("Telethon client initialized with saved session")
+                return True
             else:
-                # Use empty session (will require authentication)
+                # Try anonymous session with bot-like approach
                 self.client = TelegramClient(StringSession(), self.api_id, self.api_hash)
-            
-            # Start client without phone verification for deployment
-            await self.client.start()
-            logger.info("Telethon client initialized successfully")
-            
-            # Save session string for future use (in logs only)
-            if not session_string:
+                
+                # Start without phone (will work with app credentials only)
+                await self.client.start()
+                logger.info("Telethon client initialized successfully")
+                
+                # Get and log session for future use
                 new_session = self.client.session.save()
-                logger.info(f"New session created: {new_session[:20]}...")
-            
-            return True
+                logger.info(f"Session string for future use: {new_session}")
+                
+                return True
+                
         except Exception as e:
-            logger.error(f"Failed to initialize Telethon client: {e}")
-            logger.warning("Phone checking will be disabled - bot will work without this feature")
-            self.client = None
-            return False
+            logger.error(f"Telethon initialization failed: {e}")
+            # Don't disable completely, try alternative approach
+            try:
+                # Fallback: Basic connection without session
+                logger.info("Trying fallback connection...")
+                self.client = TelegramClient('anon', self.api_id, self.api_hash)
+                await self.client.start()
+                logger.info("Fallback Telethon client started")
+                return True
+            except Exception as e2:
+                logger.error(f"Fallback also failed: {e2}")
+                self.client = None
+                return False
     
     async def check_phone_numbers(self, phone_numbers: List[str]) -> Tuple[List[dict], List[str]]:
         """Check phone numbers and return user info for existing accounts"""
@@ -1045,13 +1057,12 @@ async def check_phone_numbers(update: Update, context: ContextTypes.DEFAULT_TYPE
     )
     
     try:
-        if not checker or not checker.client:
-            # Check if admin user
-            if user_id == ADMIN_USER_ID:
-                not_available_text = "📱 Phone checking temporarily disabled due to Telethon authentication.\n\n🔧 Contact developer to enable with proper session setup."
-            else:
-                not_available_text = await get_text(user_id, 'phone_checking_disabled')
-            await processing_msg.edit_text(not_available_text)
+        if not checker:
+            await processing_msg.edit_text("❌ Phone checking service initialization failed. Please contact admin.")
+            return
+            
+        if not checker.client:
+            await processing_msg.edit_text("❌ Telegram API connection failed. Please try again later.")
             return
         
         # Check phone numbers
@@ -1148,22 +1159,43 @@ async def handle_access_request(update: Update, context: ContextTypes.DEFAULT_TY
     
     if success:
         # Send notification to admin
-        admin_text = LANGUAGES['en']['admin_new_request'].format(
-            user.first_name or "No name",
-            user.username or "No username",
-            user_id,
-            LANGUAGES[language]['name']
-        )
-        
-        # Get the request ID for the keyboard
-        request = await get_pending_request(user_id)
-        if request:
-            keyboard = get_admin_approval_keyboard(request['id'])
-            await context.bot.send_message(
-                chat_id=ADMIN_USER_ID,
-                text=admin_text,
-                reply_markup=keyboard
-            )
+        try:
+            admin_text = f"""🔔 New Access Request
+
+👤 User: {user.first_name or "No name"} (@{user.username or "No username"})
+🆔 User ID: {user_id}
+🌐 Language: {LANGUAGES[language]['name']}
+⏰ Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+
+Please approve or reject this request."""
+            
+            # Get the request ID for the keyboard
+            request = await get_pending_request(user_id)
+            if request:
+                keyboard = get_admin_approval_keyboard(request['id'])
+                await context.bot.send_message(
+                    chat_id=ADMIN_USER_ID,
+                    text=admin_text,
+                    reply_markup=keyboard
+                )
+                logger.info(f"✅ Admin notification sent to {ADMIN_USER_ID} for user {user_id}")
+            else:
+                # Send notification without keyboard if no request found
+                await context.bot.send_message(
+                    chat_id=ADMIN_USER_ID,
+                    text=admin_text
+                )
+                logger.info(f"✅ Basic admin notification sent to {ADMIN_USER_ID}")
+                
+        except Exception as e:
+            logger.error(f"❌ Failed to send admin notification: {e}")
+            # Try simple fallback notification
+            try:
+                simple_text = f"📱 New user: {user_id} - {user.first_name} wants to use the bot"
+                await context.bot.send_message(chat_id=ADMIN_USER_ID, text=simple_text)
+                logger.info("✅ Fallback admin notification sent")
+            except Exception as e2:
+                logger.error(f"❌ Even fallback notification failed: {e2}")
         
         await update.message.reply_text(await get_text(user_id, 'request_sent'))
     else:
