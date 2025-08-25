@@ -865,6 +865,7 @@ class TelegramChecker:
 
 # Initialize checker (will be set up properly when API credentials are provided)
 checker = None
+application = None
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Start command handler with language selection and access control"""
@@ -1211,7 +1212,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def main():
     """Main function to run the bot"""
-    global checker
+    global checker, application
     
     # Initialize checker if API credentials are provided
     if API_ID != "YOUR_API_ID" and API_HASH != "YOUR_API_HASH":
@@ -1234,40 +1235,62 @@ async def main():
     # Initialize and start the bot
     logger.info("Starting Telegram Number Checker Bot...")
     try:
-        # Initialize the application
-        await application.initialize()
-        
-        # Start polling
-        await application.start()
-        await application.updater.start_polling()
-        
-        # Keep the bot running
-        logger.info("Bot is running... Press Ctrl+C to stop")
-        try:
-            # Run until interrupted
-            import signal
-            stop_event = asyncio.Event()
+        # Check if running in deployment (with PORT env var)
+        port = os.getenv('PORT')
+        if port:
+            # Deployment mode: Use webhook
+            webhook_url = f"https://numbercheckerbot-1.onrender.com/webhook"
+            logger.info(f"Setting up webhook: {webhook_url}")
             
-            def signal_handler():
-                logger.info("Received stop signal")
-                stop_event.set()
+            # Initialize and start the application
+            await application.initialize()
+            await application.start()
             
-            # Set up signal handlers
-            if hasattr(signal, 'SIGINT'):
-                signal.signal(signal.SIGINT, lambda s, f: signal_handler())
-            if hasattr(signal, 'SIGTERM'):
-                signal.signal(signal.SIGTERM, lambda s, f: signal_handler())
+            # Set webhook
+            await application.bot.set_webhook(url=webhook_url)
+            logger.info("Webhook set successfully")
             
-            # Wait for stop signal
-            await stop_event.wait()
+            # Keep running
+            logger.info("Bot is running in webhook mode...")
+            try:
+                while True:
+                    await asyncio.sleep(1)
+            except KeyboardInterrupt:
+                logger.info("Stopping bot...")
+                await application.stop()
+        else:
+            # Local mode: Use polling
+            logger.info("Running in polling mode")
+            await application.start()
+            await application.updater.start_polling()
             
-        except KeyboardInterrupt:
-            logger.info("Received KeyboardInterrupt")
-        
-        # Stop the bot
-        logger.info("Stopping bot...")
-        await application.updater.stop()
-        await application.stop()
+            # Keep the bot running
+            logger.info("Bot is running... Press Ctrl+C to stop")
+            try:
+                # Run until interrupted
+                import signal
+                stop_event = asyncio.Event()
+                
+                def signal_handler():
+                    logger.info("Received stop signal")
+                    stop_event.set()
+                
+                # Set up signal handlers
+                if hasattr(signal, 'SIGINT'):
+                    signal.signal(signal.SIGINT, lambda s, f: signal_handler())
+                if hasattr(signal, 'SIGTERM'):
+                    signal.signal(signal.SIGTERM, lambda s, f: signal_handler())
+                
+                # Wait for stop signal
+                await stop_event.wait()
+                
+            except KeyboardInterrupt:
+                logger.info("Received KeyboardInterrupt")
+            
+            # Stop the bot
+            logger.info("Stopping bot...")
+            await application.updater.stop()
+            await application.stop()
         
     except Exception as e:
         logger.error(f"Error running bot: {e}")

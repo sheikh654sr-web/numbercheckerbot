@@ -6,7 +6,7 @@ Web server for keeping the bot alive on Render
 import os
 import asyncio
 import threading
-from flask import Flask, jsonify
+from flask import Flask, jsonify, request
 from telegram_checker_bot import run_bot
 
 app = Flask(__name__)
@@ -39,6 +39,37 @@ def start_bot():
         "message": "Bot is already running!",
         "status": "active"
     })
+
+@app.route('/webhook', methods=['POST'])
+def webhook():
+    """Webhook endpoint for Telegram"""
+    try:
+        # Get the update from Telegram
+        update_data = request.get_json()
+        
+        if update_data:
+            # Import here to avoid circular imports
+            from telegram import Update
+            from telegram_checker_bot import application
+            
+            # Create Update object
+            update = Update.de_json(update_data, application.bot)
+            
+            # Process the update asynchronously
+            if application and update:
+                # Run the update processing in the event loop
+                import asyncio
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                try:
+                    loop.run_until_complete(application.process_update(update))
+                finally:
+                    loop.close()
+        
+        return 'OK', 200
+    except Exception as e:
+        print(f"Webhook error: {e}")
+        return 'Error', 500
 
 def run_flask():
     """Run Flask server"""
