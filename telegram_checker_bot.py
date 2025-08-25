@@ -52,7 +52,18 @@ logger = logging.getLogger(__name__)
 supabase = None
 if SUPABASE_AVAILABLE and SUPABASE_URL and SUPABASE_KEY and SUPABASE_URL != "your_supabase_url":
     try:
-        supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+        # Try different supabase client initialization approaches
+        try:
+            # Method 1: Basic initialization
+            supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+        except TypeError as e:
+            if 'proxy' in str(e):
+                # Method 2: Initialize without problematic parameters
+                from supabase._sync.client import Client as SyncClient
+                supabase = SyncClient(SUPABASE_URL, SUPABASE_KEY)
+            else:
+                raise e
+        
         logger.info("Supabase client initialized successfully")
     except Exception as e:
         logger.error(f"Failed to initialize Supabase client: {e}")
@@ -531,15 +542,32 @@ class TelegramChecker:
         try:
             # Use in-memory session for deployment
             from telethon.sessions import StringSession
-            self.client = TelegramClient(StringSession(), self.api_id, self.api_hash)
+            
+            # Try to get session string from environment
+            session_string = os.getenv('TELETHON_SESSION', '')
+            
+            if session_string:
+                # Use existing session string
+                self.client = TelegramClient(StringSession(session_string), self.api_id, self.api_hash)
+            else:
+                # Use empty session (will require authentication)
+                self.client = TelegramClient(StringSession(), self.api_id, self.api_hash)
+            
+            # Start client without phone verification for deployment
             await self.client.start()
             logger.info("Telethon client initialized successfully")
+            
+            # Save session string for future use (in logs only)
+            if not session_string:
+                new_session = self.client.session.save()
+                logger.info(f"New session created: {new_session[:20]}...")
+            
             return True
         except Exception as e:
             logger.error(f"Failed to initialize Telethon client: {e}")
+            logger.warning("Phone checking will be disabled - bot will work without this feature")
             self.client = None
             return False
-        return True
     
     async def check_phone_numbers(self, phone_numbers: List[str]) -> Tuple[List[dict], List[str]]:
         """Check phone numbers and return user info for existing accounts"""
@@ -1247,14 +1275,23 @@ async def main():
             await application.start()
             
             # Set webhook
-            await application.bot.set_webhook(url=webhook_url)
-            logger.info("Webhook set successfully")
+            try:
+                await application.bot.set_webhook(url=webhook_url)
+                logger.info("Webhook set successfully")
+                
+                # Verify webhook is set
+                webhook_info = await application.bot.get_webhook_info()
+                logger.info(f"Webhook info: {webhook_info.url}")
+                
+            except Exception as e:
+                logger.error(f"Failed to set webhook: {e}")
             
             # Keep running
             logger.info("Bot is running in webhook mode...")
+            logger.info("Bot is ready to receive messages!")
             try:
                 while True:
-                    await asyncio.sleep(1)
+                    await asyncio.sleep(10)  # Check every 10 seconds
             except KeyboardInterrupt:
                 logger.info("Stopping bot...")
                 await application.stop()

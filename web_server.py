@@ -47,28 +47,47 @@ def webhook():
         # Get the update from Telegram
         update_data = request.get_json()
         
-        if update_data:
-            # Import here to avoid circular imports
-            from telegram import Update
-            from telegram_checker_bot import application
-            
-            # Create Update object
-            update = Update.de_json(update_data, application.bot)
-            
+        if not update_data:
+            return 'No data', 400
+        
+        print(f"Received webhook update: {update_data.get('update_id', 'unknown')}")
+        
+        # Import here to avoid circular imports
+        from telegram import Update
+        from telegram_checker_bot import application
+        
+        if not application:
+            print("Application not initialized yet")
+            return 'Application not ready', 503
+        
+        # Create Update object
+        update = Update.de_json(update_data, application.bot)
+        
+        if update:
             # Process the update asynchronously
-            if application and update:
-                # Run the update processing in the event loop
-                import asyncio
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
+            import asyncio
+            import threading
+            
+            def process_update():
                 try:
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
                     loop.run_until_complete(application.process_update(update))
-                finally:
                     loop.close()
+                    print(f"Successfully processed update {update.update_id}")
+                except Exception as e:
+                    print(f"Error processing update: {e}")
+            
+            # Process in background thread to avoid blocking
+            thread = threading.Thread(target=process_update)
+            thread.daemon = True
+            thread.start()
         
         return 'OK', 200
     except Exception as e:
         print(f"Webhook error: {e}")
+        import traceback
+        traceback.print_exc()
         return 'Error', 500
 
 def run_flask():
