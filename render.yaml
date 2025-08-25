@@ -23,3 +23,5 @@ services:
         value: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InF4YWVuc3pjdXh5bGVxamZkZW5lIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTYxNDg1NDMsImV4cCI6MjA3MTcyNDU0M30.7YQHmClhIq2DEvBkGi3yueTSZ1Q0PTPhBnaHlSENLfg
       - key: PORT
         value: 10000
+      - key: ENABLE_PHONE_CHECKING
+        value: true

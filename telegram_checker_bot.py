@@ -354,7 +354,7 @@ async def get_user_language(user_id: int) -> str:
     """Get user's preferred language from database or memory"""
     if supabase:
         try:
-            result = supabase.table('users').select('language').eq('user_id', user_id).execute()
+            result = supabase.table('users').select('language').eq('id', user_id).execute()
             if result.data:
                 return result.data[0]['language']
         except:
@@ -370,9 +370,9 @@ async def set_user_language(user_id: int, language: str):
     """Set user's preferred language in database or memory"""
     if supabase:
         try:
-            # Upsert user language
+            # Upsert user language (using 'id' column as primary key)
             supabase.table('users').upsert({
-                'user_id': user_id,
+                'id': user_id,
                 'language': language,
                 'updated_at': datetime.now().isoformat()
             }).execute()
@@ -1294,9 +1294,38 @@ async def main():
             except:
                 pass
 
+def start_minimal_server():
+    """Start minimal HTTP server for Render port detection"""
+    import http.server
+    import socketserver
+    import threading
+    
+    port = int(os.getenv('PORT', 10000))
+    
+    class Handler(http.server.SimpleHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200)
+            self.send_header('Content-type', 'application/json')
+            self.end_headers()
+            self.wfile.write(b'{"status": "Bot running", "bot": "active"}')
+        
+        def log_message(self, format, *args):
+            pass  # Suppress HTTP logs
+    
+    with socketserver.TCPServer(("", port), Handler) as httpd:
+        print(f"✅ HTTP server running on port {port}")
+        httpd.serve_forever()
+
 if __name__ == "__main__":
     import asyncio
     print("🤖 Starting Telegram Number Checker Bot...")
+    
+    # Start HTTP server for Render if PORT is set
+    if os.getenv('PORT'):
+        import threading
+        server_thread = threading.Thread(target=start_minimal_server, daemon=True)
+        server_thread.start()
+    
     asyncio.run(main())
 
 def run_bot():
