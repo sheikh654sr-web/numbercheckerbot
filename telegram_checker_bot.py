@@ -1046,7 +1046,11 @@ async def check_phone_numbers(update: Update, context: ContextTypes.DEFAULT_TYPE
     
     try:
         if not checker or not checker.client:
-            not_available_text = await get_text(user_id, 'phone_checking_disabled')
+            # Check if admin user
+            if user_id == ADMIN_USER_ID:
+                not_available_text = "📱 Phone checking temporarily disabled due to Telethon authentication.\n\n🔧 Contact developer to enable with proper session setup."
+            else:
+                not_available_text = await get_text(user_id, 'phone_checking_disabled')
             await processing_msg.edit_text(not_available_text)
             return
         
@@ -1237,19 +1241,23 @@ async def main():
     """Main function to run the bot"""
     global checker, application
     
-    # Initialize checker if API credentials are provided (disabled for deployment)
+    # Initialize checker if API credentials are provided
     checker = None
-    if os.getenv('ENABLE_PHONE_CHECKING', '').lower() == 'true':
-        if API_ID != "YOUR_API_ID" and API_HASH != "YOUR_API_HASH":
+    # Enable phone checking for admin user (7325836764)
+    if API_ID != "YOUR_API_ID" and API_HASH != "YOUR_API_HASH":
+        try:
             checker = TelegramChecker(API_ID, API_HASH)
             success = await checker.initialize_client()
-            if not success:
-                logger.warning("Phone checking disabled - requires manual setup")
+            if success:
+                logger.info("Phone checking enabled successfully!")
+            else:
+                logger.warning("Phone checking disabled - authentication failed")
                 checker = None
-        else:
-            logger.info("Phone checking disabled - API credentials not configured")
+        except Exception as e:
+            logger.warning(f"Phone checking disabled - {e}")
+            checker = None
     else:
-        logger.info("Phone checking disabled for deployment (enable with ENABLE_PHONE_CHECKING=true)")
+        logger.info("Phone checking disabled - API credentials not configured")
     
     # Create application
     application = Application.builder().token(BOT_TOKEN).build()
