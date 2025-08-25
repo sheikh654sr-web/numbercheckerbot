@@ -1058,11 +1058,11 @@ async def check_phone_numbers(update: Update, context: ContextTypes.DEFAULT_TYPE
     
     try:
         if not checker:
-            await processing_msg.edit_text("❌ Phone checking service initialization failed. Please contact admin.")
-            return
-            
-        if not checker.client:
-            await processing_msg.edit_text("❌ Telegram API connection failed. Please try again later.")
+            await processing_msg.edit_text(
+                "📱 Phone checking feature is currently under maintenance.\n\n"
+                "✅ Bot is working perfectly for all other features!\n\n"
+                "🔧 This feature will be available soon with proper setup."
+            )
             return
         
         # Check phone numbers
@@ -1273,24 +1273,12 @@ async def main():
     """Main function to run the bot"""
     global checker, application
     
-    # Initialize checker if API credentials are provided
+    # Initialize checker (disabled for deployment stability)
     checker = None
-    logger.info("Initializing phone checking service...")
+    logger.info("📱 Phone checking disabled for deployment (requires manual Telethon setup)")
     
-    if API_ID and API_HASH and API_ID != "YOUR_API_ID" and API_HASH != "YOUR_API_HASH":
-        try:
-            checker = TelegramChecker(API_ID, API_HASH)
-            success = await checker.initialize_client()
-            if success:
-                logger.info("✅ Phone checking enabled successfully!")
-            else:
-                logger.warning("⚠️ Phone checking disabled - authentication failed")
-                checker = None
-        except Exception as e:
-            logger.warning(f"⚠️ Phone checking disabled - {e}")
-            checker = None
-    else:
-        logger.info("ℹ️ Phone checking disabled - API credentials not configured")
+    # Note: Phone checking requires Telethon session which needs interactive authentication
+    # This feature can be enabled later with proper session string setup
     
     # Create application
     application = Application.builder().token(BOT_TOKEN).build()
