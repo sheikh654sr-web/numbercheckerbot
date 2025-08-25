@@ -540,12 +540,14 @@ class TelegramChecker:
             # Force create client without authentication first
             self.client = TelegramClient(StringSession(), self.api_id, self.api_hash)
             
-            # Connect without signing in (for API usage only)
+            # Connect and try to authenticate
             await asyncio.wait_for(self.client.connect(), timeout=10.0)
             
             if not await self.client.is_user_authorized():
-                logger.info("⚡ Using API-only mode for phone checking")
-                # We'll use the connected client for basic API calls
+                logger.info("⚡ Client connected but not authorized - limited functionality")
+                # Try to use without full auth (some methods might still work)
+            else:
+                logger.info("🎉 Client fully authenticated!")
                 
             logger.info("✅ Telethon client ready for phone checking")
             return True
