@@ -33,20 +33,28 @@ SUPABASE_KEY = os.getenv("SUPABASE_KEY", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.e
 # Server configuration
 PORT = int(os.getenv("PORT", "10000"))
 
-# Initialize Supabase client
-try:
-    supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
-    logger.info("Supabase client initialized successfully")
-except Exception as e:
-    logger.error(f"Failed to initialize Supabase client: {e}")
-    supabase = None
-
-# Set up logging
+# Set up logging first
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
+
+# Initialize Supabase client (optional)
+supabase = None
+try:
+    if SUPABASE_URL and SUPABASE_KEY:
+        supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+        logger.info("Supabase client initialized successfully")
+    else:
+        logger.info("Supabase credentials not provided, using in-memory storage")
+except Exception as e:
+    logger.error(f"Failed to initialize Supabase client: {e}")
+    logger.info("Bot will run with in-memory storage")
+
+# In-memory storage fallback
+memory_users = {}  # user_id: {'language': 'en', 'access_status': 'pending'}
+memory_requests = {}  # user_id: {'status': 'pending', 'created_at': datetime}
 
 # Language configurations
 LANGUAGES = {
@@ -329,48 +337,60 @@ async def init_database():
         logger.info("Access requests table created")
 
 async def get_user_language(user_id: int) -> str:
-    """Get user's preferred language from database"""
-    if not supabase:
-        return 'en'  # Default to English if no database
-        
-    try:
-        result = supabase.table('users').select('language').eq('user_id', user_id).execute()
-        if result.data:
-            return result.data[0]['language']
-    except:
-        pass
+    """Get user's preferred language from database or memory"""
+    if supabase:
+        try:
+            result = supabase.table('users').select('language').eq('user_id', user_id).execute()
+            if result.data:
+                return result.data[0]['language']
+        except:
+            pass
+    
+    # Fallback to in-memory storage
+    if user_id in memory_users:
+        return memory_users[user_id].get('language', 'en')
+    
     return 'en'  # Default to English
 
 async def set_user_language(user_id: int, language: str):
-    """Set user's preferred language in database"""
-    if not supabase:
-        logger.warning("Supabase not available, language not saved")
-        return
-        
-    try:
-        # Upsert user language
-        supabase.table('users').upsert({
-            'user_id': user_id,
-            'language': language,
-            'updated_at': datetime.now().isoformat()
-        }).execute()
-    except Exception as e:
-        logger.error(f"Error setting user language: {e}")
+    """Set user's preferred language in database or memory"""
+    if supabase:
+        try:
+            # Upsert user language
+            supabase.table('users').upsert({
+                'user_id': user_id,
+                'language': language,
+                'updated_at': datetime.now().isoformat()
+            }).execute()
+        except Exception as e:
+            logger.error(f"Error setting user language: {e}")
+    
+    # Always store in memory as fallback
+    if user_id not in memory_users:
+        memory_users[user_id] = {}
+    memory_users[user_id]['language'] = language
 
 async def check_user_access(user_id: int) -> bool:
     """Check if user has access to the bot"""
     if user_id == ADMIN_USER_ID:
         return True
     
-    if not supabase:
-        return True  # Allow access if database is not available
+    if supabase:
+        try:
+            result = supabase.table('users').select('access_status').eq('user_id', user_id).execute()
+            if result.data:
+                return result.data[0]['access_status'] == 'approved'
+        except:
+            pass
     
-    try:
-        result = supabase.table('users').select('access_status').eq('user_id', user_id).execute()
-        if result.data:
-            return result.data[0]['access_status'] == 'approved'
-    except:
-        pass
+    # Check in-memory storage
+    if user_id in memory_users:
+        return memory_users[user_id].get('access_status', 'pending') == 'approved'
+    
+    # For deployment without database, allow access for testing
+    if not supabase:
+        return True
+    
     return False
 
 async def get_pending_request(user_id: int) -> dict:
