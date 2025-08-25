@@ -1,0 +1,25 @@
+services:
+  - type: web
+    name: numbercheckerbot
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python web_server.py
+    plan: free
+    autoDeploy: false
+    envVars:
+      - key: BOT_TOKEN
+        value: 8453861160:AAFmViauReZNPveHnEslkOthMwcK6FrIEvI
+      - key: TELEGRAM_API_ID
+        value: 22969300
+      - key: TELEGRAM_API_HASH
+        value: e78b8ed26aa341bd36690bdc13d2159a
+      - key: ADMIN_USER_ID
+        value: 7325836764
+      - key: ADMIN_USERNAME
+        value: tasktreasur_support
+      - key: SUPABASE_URL
+        value: https://qxaenszcuxyleqjfdene.supabase.co
+      - key: SUPABASE_KEY
+        value: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InF4YWVuc3pjdXh5bGVxamZkZW5lIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTYxNDg1NDMsImV4cCI6MjA3MTcyNDU0M30.7YQHmClhIq2DEvBkGi3yueTSZ1Q0PTPhBnaHlSENLfg
+      - key: PORT
+        value: 10000
