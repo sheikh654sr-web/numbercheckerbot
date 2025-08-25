@@ -2,7 +2,8 @@ python-telegram-bot==20.7
 telethon==1.32.1
 phonenumbers==8.13.27
 asyncio
-supabase==1.0.3
+supabase==2.7.4
 python-dotenv==1.0.0
 flask==3.0.0
 gunicorn==21.2.0
+httpx==0.25.2

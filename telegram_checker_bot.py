@@ -11,8 +11,16 @@ from telegram.ext import Application, CommandHandler, MessageHandler, filters, C
 from telethon import TelegramClient
 from telethon.errors import PhoneNumberInvalidError, UsernameNotOccupiedError
 from telethon.tl.functions.contacts import ResolveUsernameRequest
-from supabase import create_client, Client
 from dotenv import load_dotenv
+
+# Optional Supabase import
+try:
+    from supabase import create_client, Client
+    SUPABASE_AVAILABLE = True
+except ImportError:
+    SUPABASE_AVAILABLE = False
+    Client = None
+    create_client = None
 
 # Load environment variables
 load_dotenv()
@@ -42,15 +50,16 @@ logger = logging.getLogger(__name__)
 
 # Initialize Supabase client (optional)
 supabase = None
-try:
-    if SUPABASE_URL and SUPABASE_KEY:
+if SUPABASE_AVAILABLE and SUPABASE_URL and SUPABASE_KEY and SUPABASE_URL != "your_supabase_url":
+    try:
         supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
         logger.info("Supabase client initialized successfully")
-    else:
-        logger.info("Supabase credentials not provided, using in-memory storage")
-except Exception as e:
-    logger.error(f"Failed to initialize Supabase client: {e}")
-    logger.info("Bot will run with in-memory storage")
+    except Exception as e:
+        logger.error(f"Failed to initialize Supabase client: {e}")
+        logger.info("Bot will run with in-memory storage")
+        supabase = None
+else:
+    logger.info("Using in-memory storage (Supabase not configured)")
 
 # In-memory storage fallback
 memory_users = {}  # user_id: {'language': 'en', 'access_status': 'pending'}
