@@ -1,1 +1,1 @@
-web: python web_server.py
+web: python telegram_checker_bot.py

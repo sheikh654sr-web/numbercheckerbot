@@ -4,10 +4,7 @@ Web server for keeping the bot alive on Render
 """
 
 import os
-import asyncio
-import threading
-from flask import Flask, jsonify, request
-from telegram_checker_bot import run_bot
+from flask import Flask, jsonify
 
 app = Flask(__name__)
 
