@@ -1294,34 +1294,9 @@ async def main():
             except:
                 pass
 
-def start_web_server():
-    """Start simple web server for Render health check"""
-    from flask import Flask
-    import threading
-    
-    app = Flask(__name__)
-    
-    @app.route('/')
-    def health():
-        return {"status": "Bot is running!", "timestamp": str(datetime.now())}
-    
-    @app.route('/health')
-    def health_check():
-        return {"status": "healthy"}
-    
-    port = int(os.getenv('PORT', 10000))
-    threading.Thread(target=lambda: app.run(host='0.0.0.0', port=port, debug=False), daemon=True).start()
-
 if __name__ == "__main__":
     import asyncio
-    from datetime import datetime
-    
-    # Start web server for Render if PORT is set
-    if os.getenv('PORT'):
-        start_web_server()
-        print(f"🌐 Web server started on port {os.getenv('PORT')}")
-    
-    print("🤖 Starting bot...")
+    print("🤖 Starting Telegram Number Checker Bot...")
     asyncio.run(main())
 
 def run_bot():
