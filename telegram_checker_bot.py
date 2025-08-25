@@ -532,48 +532,47 @@ class TelegramChecker:
         self.client = None
     
     async def initialize_client(self):
-        """Initialize Telethon client"""
+        """Initialize Telethon client with timeout protection"""
         try:
             # Use in-memory session for deployment
             from telethon.sessions import StringSession
+            import asyncio
             
             # Try to get session string from environment
             session_string = os.getenv('TELETHON_SESSION', '')
             
-            if session_string:
-                # Use existing session string
-                self.client = TelegramClient(StringSession(session_string), self.api_id, self.api_hash)
-                await self.client.start()
-                logger.info("Telethon client initialized with saved session")
-                return True
-            else:
-                # Try anonymous session with bot-like approach
-                self.client = TelegramClient(StringSession(), self.api_id, self.api_hash)
+            async def connect_with_timeout():
+                if session_string:
+                    # Use existing session string
+                    self.client = TelegramClient(StringSession(session_string), self.api_id, self.api_hash)
+                else:
+                    # Use memory session - no file creation
+                    self.client = TelegramClient(StringSession(), self.api_id, self.api_hash)
                 
-                # Start without phone (will work with app credentials only)
-                await self.client.start()
-                logger.info("Telethon client initialized successfully")
+                # Start with timeout
+                await asyncio.wait_for(self.client.start(), timeout=10.0)
                 
-                # Get and log session for future use
-                new_session = self.client.session.save()
-                logger.info(f"Session string for future use: {new_session}")
+                if not session_string:
+                    # Get session for future use
+                    new_session = self.client.session.save()
+                    logger.info(f"Session created: {new_session[:20]}...")
                 
                 return True
+            
+            # Try connection with timeout
+            await connect_with_timeout()
+            logger.info("✅ Telethon client connected successfully")
+            return True
                 
+        except asyncio.TimeoutError:
+            logger.warning("⚠️ Telethon connection timeout - using alternative method")
+            # Create dummy checker that won't cause crashes
+            self.client = None
+            return False
         except Exception as e:
-            logger.error(f"Telethon initialization failed: {e}")
-            # Don't disable completely, try alternative approach
-            try:
-                # Fallback: Basic connection without session
-                logger.info("Trying fallback connection...")
-                self.client = TelegramClient('anon', self.api_id, self.api_hash)
-                await self.client.start()
-                logger.info("Fallback Telethon client started")
-                return True
-            except Exception as e2:
-                logger.error(f"Fallback also failed: {e2}")
-                self.client = None
-                return False
+            logger.warning(f"⚠️ Telethon connection failed: {e}")
+            self.client = None
+            return False
     
     async def check_phone_numbers(self, phone_numbers: List[str]) -> Tuple[List[dict], List[str]]:
         """Check phone numbers and return user info for existing accounts"""
@@ -1057,12 +1056,27 @@ async def check_phone_numbers(update: Update, context: ContextTypes.DEFAULT_TYPE
     )
     
     try:
-        if not checker:
-            await processing_msg.edit_text(
-                "📱 Phone checking feature is currently under maintenance.\n\n"
-                "✅ Bot is working perfectly for all other features!\n\n"
-                "🔧 This feature will be available soon with proper setup."
-            )
+        if not checker or not checker.client:
+            # Provide manual phone checking alternative
+            manual_check_text = f"""📱 **Phone Number Analysis**
+
+🔍 **Numbers to check:** {len(phone_numbers)}
+
+📋 **Manual Check Instructions:**
+1. Open Telegram app
+2. Go to "Add Contact" 
+3. Enter each number one by one
+4. Numbers that show Telegram profiles = ✅ Exist
+5. Numbers that don't show profiles = ❌ Don't exist
+
+📱 **Your Numbers:**
+{chr(10).join(f"• {num}" for num in phone_numbers[:20])}
+{"..." if len(phone_numbers) > 20 else ""}
+
+⚡ **Automated checking temporarily unavailable**
+🔧 **Manual method is 100% accurate**"""
+
+            await processing_msg.edit_text(manual_check_text)
             return
         
         # Check phone numbers
@@ -1273,12 +1287,20 @@ async def main():
     """Main function to run the bot"""
     global checker, application
     
-    # Initialize checker (disabled for deployment stability)
+    # Initialize checker - FORCE ENABLE for deployment
     checker = None
-    logger.info("📱 Phone checking disabled for deployment (requires manual Telethon setup)")
+    logger.info("🔄 Initializing phone checking service...")
     
-    # Note: Phone checking requires Telethon session which needs interactive authentication
-    # This feature can be enabled later with proper session string setup
+    try:
+        checker = TelegramChecker(API_ID, API_HASH)
+        success = await checker.initialize_client()
+        if success:
+            logger.info("✅ Phone checking service enabled!")
+        else:
+            logger.warning("⚠️ Phone checking failed, but continuing...")
+    except Exception as e:
+        logger.warning(f"⚠️ Phone checking error: {e}, but bot will continue...")
+        checker = None
     
     # Create application
     application = Application.builder().token(BOT_TOKEN).build()
