@@ -52,22 +52,12 @@ logger = logging.getLogger(__name__)
 supabase = None
 if SUPABASE_AVAILABLE and SUPABASE_URL and SUPABASE_KEY and SUPABASE_URL != "your_supabase_url":
     try:
-        # Try different supabase client initialization approaches
-        try:
-            # Method 1: Basic initialization
-            supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
-        except TypeError as e:
-            if 'proxy' in str(e):
-                # Method 2: Initialize without problematic parameters
-                from supabase._sync.client import Client as SyncClient
-                supabase = SyncClient(SUPABASE_URL, SUPABASE_KEY)
-            else:
-                raise e
-        
+        # Simple Supabase initialization
+        supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
         logger.info("Supabase client initialized successfully")
     except Exception as e:
-        logger.error(f"Failed to initialize Supabase client: {e}")
-        logger.info("Bot will run with in-memory storage")
+        logger.warning(f"Supabase not available: {e}")
+        logger.info("Using in-memory storage (recommended for initial deployment)")
         supabase = None
 else:
     logger.info("Using in-memory storage (Supabase not configured)")
@@ -140,7 +130,8 @@ Examples:
         'admin_new_request': "🔔 New Access Request\n\nUser: {} ({})\nUser ID: {}\nLanguage: {}",
         'admin_approve': "✅ Approve",
         'admin_reject': "❌ Reject",
-        'access_required': "🔒 You need admin approval to use this bot.\nPlease request access first."
+        'access_required': "🔒 You need admin approval to use this bot.\nPlease request access first.",
+        'phone_checking_disabled': "📱 Phone checking feature is currently disabled for deployment.\n\n✅ Bot is working perfectly for other features!\n\n🔧 Admin can enable phone checking later with proper setup."
     },
     'bn': {
         'name': '🇧🇩 বাংলা',
@@ -204,7 +195,8 @@ Examples:
         'admin_new_request': "🔔 নতুন অ্যাক্সেস রিকোয়েস্ট\n\nইউজার: {} ({})\nইউজার আইডি: {}\nভাষা: {}",
         'admin_approve': "✅ অনুমোদন",
         'admin_reject': "❌ প্রত্যাখ্যান",
-        'access_required': "🔒 এই বট ব্যবহারের জন্য এডমিনের অনুমোদন প্রয়োজন।\nদয়া করে প্রথমে অ্যাক্সেস রিকোয়েস্ট করুন।"
+        'access_required': "🔒 এই বট ব্যবহারের জন্য এডমিনের অনুমোদন প্রয়োজন।\nদয়া করে প্রথমে অ্যাক্সেস রিকোয়েস্ট করুন।",
+        'phone_checking_disabled': "📱 ফোন চেকিং ফিচার বর্তমানে deployment এর জন্য বন্ধ রয়েছে।\n\n✅ বটের অন্যান্য ফিচার perfectly কাজ করছে!\n\n🔧 এডমিন পরে proper setup দিয়ে ফোন চেকিং চালু করতে পারবেন।"
     },
     'hi': {
         'name': '🇮🇳 हिंदी',
@@ -268,7 +260,8 @@ Examples:
         'admin_new_request': "🔔 नई एक्सेस रिक्वेस्ट\n\nयूजर: {} ({})\nयूजर आईडी: {}\nभाषा: {}",
         'admin_approve': "✅ अप्रूव",
         'admin_reject': "❌ रिजेक्ट",
-        'access_required': "🔒 इस बॉट का उपयोग करने के लिए एडमिन अप्रूवल चाहिए।\nकृपया पहले एक्सेस रिक्वेस्ट करें।"
+        'access_required': "🔒 इस बॉट का उपयोग करने के लिए एडमिन अप्रूवल चाहिए।\nकृपया पहले एक्सेस रिक्वेस्ट करें।",
+        'phone_checking_disabled': "📱 फोन चेकिंग फीचर वर्तमान में deployment के लिए बंद है।\n\n✅ बॉट के अन्य features perfectly काम कर रहे हैं!\n\n🔧 Admin बाद में proper setup के साथ phone checking चालू कर सकते हैं।"
     },
     'ar': {
         'name': '🇸🇦 العربية',
@@ -332,7 +325,8 @@ Examples:
         'admin_new_request': "🔔 طلب وصول جديد\n\nالمستخدم: {} ({})\nمعرف المستخدم: {}\nاللغة: {}",
         'admin_approve': "✅ موافقة",
         'admin_reject': "❌ رفض",
-        'access_required': "🔒 تحتاج موافقة المدير لاستخدام هذا البوت.\nيرجى طلب الوصول أولاً."
+        'access_required': "🔒 تحتاج موافقة المدير لاستخدام هذا البوت.\nيرجى طلب الوصول أولاً.",
+        'phone_checking_disabled': "📱 ميزة فحص الهاتف معطلة حالياً للنشر.\n\n✅ باقي ميزات البوت تعمل بشكل مثالي!\n\n🔧 يمكن للمدير تفعيل فحص الهاتف لاحقاً مع الإعداد المناسب."
     }
 }
 
@@ -1052,7 +1046,8 @@ async def check_phone_numbers(update: Update, context: ContextTypes.DEFAULT_TYPE
     
     try:
         if not checker or not checker.client:
-            await processing_msg.edit_text("❌ Phone checking service not available. Please contact admin.")
+            not_available_text = await get_text(user_id, 'phone_checking_disabled')
+            await processing_msg.edit_text(not_available_text)
             return
         
         # Check phone numbers
@@ -1242,14 +1237,19 @@ async def main():
     """Main function to run the bot"""
     global checker, application
     
-    # Initialize checker if API credentials are provided
-    if API_ID != "YOUR_API_ID" and API_HASH != "YOUR_API_HASH":
-        checker = TelegramChecker(API_ID, API_HASH)
-        success = await checker.initialize_client()
-        if not success:
-            logger.warning("Telethon client initialization failed, phone checking will be disabled")
+    # Initialize checker if API credentials are provided (disabled for deployment)
+    checker = None
+    if os.getenv('ENABLE_PHONE_CHECKING', '').lower() == 'true':
+        if API_ID != "YOUR_API_ID" and API_HASH != "YOUR_API_HASH":
+            checker = TelegramChecker(API_ID, API_HASH)
+            success = await checker.initialize_client()
+            if not success:
+                logger.warning("Phone checking disabled - requires manual setup")
+                checker = None
+        else:
+            logger.info("Phone checking disabled - API credentials not configured")
     else:
-        logger.warning("Telegram API credentials not provided")
+        logger.info("Phone checking disabled for deployment (enable with ENABLE_PHONE_CHECKING=true)")
     
     # Create application
     application = Application.builder().token(BOT_TOKEN).build()
