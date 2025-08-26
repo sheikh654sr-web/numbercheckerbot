@@ -579,34 +579,37 @@ class TelegramChecker:
             logger.error("Telethon client not initialized")
             return existing_with_info, non_existing
         
-        # Parallel processing with controlled concurrency
-        semaphore = asyncio.Semaphore(3)  # Max 3 concurrent checks
-        
+        # Sequential processing with minimal delay to avoid flood waits
         async def check_single_phone(phone):
-            async with semaphore:
-                try:
-                    # Format phone number
-                    formatted_phone = self.format_phone_number(phone)
-                    if not formatted_phone:
-                        return phone, None
-                    
-                    logger.info(f"Checking phone number: {formatted_phone}")
-                    user_info = await self._get_user_info(formatted_phone)
-                    
-                    if user_info:
-                        logger.info(f"✅ Found user: {formatted_phone} -> ID: {user_info.get('user_id')}")
-                        return phone, user_info
-                    else:
-                        logger.info(f"❌ Not found: {formatted_phone}")
-                        return phone, None
-                        
-                except Exception as e:
-                    logger.error(f"Error checking phone {phone}: {e}")
+            try:
+                # Format phone number
+                formatted_phone = self.format_phone_number(phone)
+                if not formatted_phone:
                     return phone, None
+                
+                logger.info(f"Checking phone number: {formatted_phone}")
+                user_info = await self._get_user_info(formatted_phone)
+                
+                if user_info:
+                    logger.info(f"✅ Found user: {formatted_phone} -> ID: {user_info.get('user_id')}")
+                    return phone, user_info
+                else:
+                    logger.info(f"❌ Not found: {formatted_phone}")
+                    return phone, None
+                    
+            except Exception as e:
+                logger.error(f"Error checking phone {phone}: {e}")
+                return phone, None
         
-        # Execute all checks in parallel
-        tasks = [check_single_phone(phone) for phone in phone_numbers]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+        # Process numbers sequentially with small delay
+        results = []
+        for i, phone in enumerate(phone_numbers):
+            result = await check_single_phone(phone)
+            results.append(result)
+            
+            # Add delay between checks to avoid flood waits
+            if i < len(phone_numbers) - 1:  # Don't delay after last number
+                await asyncio.sleep(2)  # 2 second delay between checks
         
         # Process results
         for result in results:
