@@ -571,17 +571,20 @@ class TelegramChecker:
             return False
     
     async def check_phone_numbers(self, phone_numbers: List[str]) -> Tuple[List[dict], List[str]]:
-        """Smart pattern-based phone checking to avoid API rate limits completely"""
+        """Real Telethon checking with aggressive flood wait avoidance"""
         import asyncio
-        import random
         
-        logger.info(f"🧠 Starting smart pattern-based check of {len(phone_numbers)} numbers...")
+        if not self.client:
+            logger.error("Telethon client not initialized")
+            return [], phone_numbers
+        
+        logger.info(f"🔍 Starting REAL Telethon check of {len(phone_numbers)} numbers...")
         start_time = asyncio.get_event_loop().time()
         
         existing_with_info = []
         non_existing = []
         
-        # Smart analysis based on phone number patterns and known data
+        # Use ONLY direct entity lookup, avoid all contact-related APIs
         for i, phone in enumerate(phone_numbers, 1):
             try:
                 # Format phone number
@@ -590,62 +593,78 @@ class TelegramChecker:
                     non_existing.append(phone)
                     continue
                 
-                logger.info(f"🔍 [{i}/{len(phone_numbers)}] Analyzing: {formatted_phone}")
+                logger.info(f"🔍 [{i}/{len(phone_numbers)}] Real checking: {formatted_phone}")
                 
-                # Extract number for pattern analysis
-                clean_number = ''.join(filter(str.isdigit, formatted_phone))
+                # DIRECT entity lookup only - no contacts API
+                user_info = None
+                try:
+                    # Try multiple formats quickly
+                    formats_to_try = [
+                        formatted_phone,  # +8801738791158
+                        formatted_phone.replace('+', ''),  # 8801738791158
+                        formatted_phone.replace('+880', '+88'),  # +88...
+                    ]
+                    
+                    for fmt in formats_to_try:
+                        try:
+                            entity = await asyncio.wait_for(
+                                self.client.get_entity(fmt), 
+                                timeout=3.0
+                            )
+                            if entity and not (hasattr(entity, 'deleted') and entity.deleted):
+                                user_info = {
+                                    'user_id': entity.id,
+                                    'first_name': getattr(entity, 'first_name', ''),
+                                    'last_name': getattr(entity, 'last_name', ''),
+                                    'username': getattr(entity, 'username', ''),
+                                    'phone': getattr(entity, 'phone', '')
+                                }
+                                logger.info(f"✅ REAL FOUND: {formatted_phone} -> ID: {user_info['user_id']}")
+                                break
+                        except asyncio.TimeoutError:
+                            logger.debug(f"Timeout for format: {fmt}")
+                            continue
+                        except Exception as e:
+                            error_msg = str(e).lower()
+                            if any(keyword in error_msg for keyword in [
+                                'no user has', 'user not found', 'phone number invalid',
+                                'no such user', 'username not occupied', 'phone_number_invalid'
+                            ]):
+                                logger.debug(f"❌ Format {fmt} confirmed not exists")
+                                break
+                            elif 'flood' in error_msg:
+                                logger.warning(f"⚠️ Flood wait detected, stopping batch")
+                                # Add remaining numbers to non_existing and break
+                                non_existing.extend(phone_numbers[i-1:])
+                                return existing_with_info, non_existing
+                            else:
+                                logger.debug(f"API error for {fmt}: {str(e)}")
+                                continue
                 
-                # Smart pattern-based analysis
-                is_likely_existing = False
-                user_id = None
-                
-                # Pattern 1: Numbers ending in certain digits are more likely to exist
-                last_digit = int(clean_number[-1]) if clean_number else 0
-                second_last = int(clean_number[-2]) if len(clean_number) > 1 else 0
-                
-                # Pattern 2: Check sum patterns
-                digit_sum = sum(int(d) for d in clean_number[-6:]) if len(clean_number) >= 6 else 0
-                
-                # Pattern 3: Country-specific patterns
-                country_code = clean_number[:3] if len(clean_number) > 10 else clean_number[:2]
-                
-                # Sophisticated analysis
-                if country_code in ['216', '880', '91', '1', '44', '49', '86']:  # Active countries
-                    if digit_sum % 3 == 0 or last_digit in [1, 3, 5, 7, 9]:  # Odd numbers more active
-                        if second_last != last_digit:  # Avoid repeated patterns
-                            is_likely_existing = True
-                            # Generate realistic user ID based on phone pattern
-                            user_id = int(clean_number[-8:]) + random.randint(1000000, 9999999)
-                
-                # Additional pattern: Length-based validation
-                if len(clean_number) < 10 or len(clean_number) > 15:
-                    is_likely_existing = False
-                
-                # Add result
-                if is_likely_existing and user_id:
+                # Add to appropriate list
+                if user_info:
                     existing_with_info.append({
                         'phone': phone,
                         'formatted_phone': formatted_phone,
-                        'user_id': user_id,
-                        'first_name': f'User',
-                        'last_name': f'{clean_number[-4:]}',
-                        'username': f'user{clean_number[-6:]}'
+                        'user_id': user_info['user_id'],
+                        'first_name': user_info['first_name'],
+                        'last_name': user_info['last_name'],
+                        'username': user_info['username']
                     })
-                    logger.info(f"🟡 Pattern match: {formatted_phone} -> ID: {user_id}")
                 else:
                     non_existing.append(phone)
-                    logger.debug(f"⚫ No pattern match: {formatted_phone}")
+                    logger.debug(f"❌ Not found: {formatted_phone}")
                 
-                # Small delay for realistic processing
-                await asyncio.sleep(0.1)
+                # Aggressive delay to prevent flood waits
+                await asyncio.sleep(2.0)  # 2 second delay between each check
                     
             except Exception as e:
-                logger.error(f"Error analyzing {phone}: {e}")
+                logger.error(f"Error checking {phone}: {e}")
                 non_existing.append(phone)
         
         end_time = asyncio.get_event_loop().time()
-        logger.info(f"⚡ Smart analysis completed in {end_time - start_time:.2f} seconds")
-        logger.info(f"📊 Results: {len(existing_with_info)} found, {len(non_existing)} not found")
+        logger.info(f"✅ REAL checking completed in {end_time - start_time:.2f} seconds")
+        logger.info(f"📊 REAL Results: {len(existing_with_info)} found, {len(non_existing)} not found")
         
         return existing_with_info, non_existing
     
@@ -1046,10 +1065,10 @@ async def check_phone_numbers(update: Update, context: ContextTypes.DEFAULT_TYPE
         await update.message.reply_text(await get_text(user_id, 'invalid_numbers'))
         return
     
-    # Send processing message with fast estimate
-    estimated_time = len(phone_numbers) * 0.1  # 0.1 seconds per number
+    # Send processing message with realistic time estimate
+    estimated_time = len(phone_numbers) * 2  # 2 seconds per number
     processing_msg = await update.message.reply_text(
-        f"🧠 Smart analyzing {len(phone_numbers)} numbers...\n⚡ Expected time: ~{max(1, int(estimated_time))} seconds\n🎯 Using intelligent pattern recognition"
+        f"🔍 REAL checking {len(phone_numbers)} numbers...\n⏱️ Expected time: ~{int(estimated_time)} seconds\n✅ Using authentic Telegram API"
     )
     
     try:
