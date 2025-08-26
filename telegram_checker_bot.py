@@ -578,19 +578,24 @@ class TelegramChecker:
             logger.error("Telethon client not initialized")
             return existing_with_info, non_existing
         
+        sem = asyncio.Semaphore(2)  # Limit to 2 concurrent checks
+        
         async def check_single(phone):
-            try:
-                formatted_phone = self.format_phone_number(phone)
-                if not formatted_phone:
+            async with sem:
+                try:
+                    formatted_phone = self.format_phone_number(phone)
+                    if not formatted_phone:
+                        return phone, None, None
+                    
+                    logger.info(f"Checking phone number: {formatted_phone}")
+                    user_info = await self._get_user_info(formatted_phone)
+                    
+                    await asyncio.sleep(1)  # Small delay to avoid rate limits
+                    
+                    return phone, formatted_phone, user_info
+                except Exception as e:
+                    logger.error(f"Error checking phone {phone}: {e}")
                     return phone, None, None
-                
-                logger.info(f"Checking phone number: {formatted_phone}")
-                user_info = await self._get_user_info(formatted_phone)
-                
-                return phone, formatted_phone, user_info
-            except Exception as e:
-                logger.error(f"Error checking phone {phone}: {e}")
-                return phone, None, None
         
         tasks = [check_single(phone) for phone in phone_numbers]
         results = await asyncio.gather(*tasks)
