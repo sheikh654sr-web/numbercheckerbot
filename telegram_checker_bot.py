@@ -571,82 +571,83 @@ class TelegramChecker:
             return False
     
     async def check_phone_numbers(self, phone_numbers: List[str]) -> Tuple[List[dict], List[str]]:
-        """Check phone numbers concurrently for faster processing"""
+        """Check phone numbers sequentially to avoid API rate limits"""
         import asyncio
         
         if not self.client:
             logger.error("Telethon client not initialized")
             return [], phone_numbers
         
-        async def check_single_number(phone: str) -> dict:
-            """Check a single phone number and return result"""
+        existing_with_info = []
+        non_existing = []
+        
+        logger.info(f"🔍 Starting sequential check of {len(phone_numbers)} numbers...")
+        start_time = asyncio.get_event_loop().time()
+        
+        for i, phone in enumerate(phone_numbers, 1):
             try:
                 # Format phone number
                 formatted_phone = self.format_phone_number(phone)
                 if not formatted_phone:
-                    return {'phone': phone, 'status': 'invalid', 'user_info': None}
+                    non_existing.append(phone)
+                    continue
                 
-                logger.debug(f"🔍 Checking: {formatted_phone}")
-                user_info = await self._get_user_info(formatted_phone)
+                logger.info(f"🔍 [{i}/{len(phone_numbers)}] Checking: {formatted_phone}")
                 
-                if user_info:
-                    logger.info(f"✅ Found: {formatted_phone} -> ID: {user_info.get('user_id')}")
-                    return {
-                        'phone': phone,
-                        'status': 'found',
-                        'user_info': {
-                            'phone': phone,
-                            'formatted_phone': formatted_phone,
-                            'user_id': user_info.get('user_id'),
-                            'first_name': user_info.get('first_name', ''),
-                            'last_name': user_info.get('last_name', ''),
-                            'username': user_info.get('username', '')
+                # Use only direct entity lookup to avoid rate limits
+                user_info = None
+                try:
+                    entity = await self.client.get_entity(formatted_phone)
+                    if entity and not (hasattr(entity, 'deleted') and entity.deleted):
+                        user_info = {
+                            'user_id': entity.id,
+                            'first_name': getattr(entity, 'first_name', ''),
+                            'last_name': getattr(entity, 'last_name', ''),
+                            'username': getattr(entity, 'username', ''),
+                            'phone': getattr(entity, 'phone', '')
                         }
-                    }
+                        logger.info(f"✅ Found: {formatted_phone} -> ID: {user_info['user_id']}")
+                    else:
+                        logger.debug(f"❌ Not found: {formatted_phone}")
+                except Exception as e:
+                    error_msg = str(e).lower()
+                    if any(keyword in error_msg for keyword in [
+                        'no user has', 'user not found', 'phone number invalid',
+                        'no such user', 'username not occupied', 'phone_number_invalid'
+                    ]):
+                        logger.debug(f"❌ Confirmed not exists: {formatted_phone}")
+                    else:
+                        logger.debug(f"⚠️ API error for {formatted_phone}: {str(e)}")
+                
+                # Add to appropriate list
+                if user_info:
+                    existing_with_info.append({
+                        'phone': phone,
+                        'formatted_phone': formatted_phone,
+                        'user_id': user_info['user_id'],
+                        'first_name': user_info['first_name'],
+                        'last_name': user_info['last_name'],
+                        'username': user_info['username']
+                    })
                 else:
-                    logger.debug(f"❌ Not found: {formatted_phone}")
-                    return {'phone': phone, 'status': 'not_found', 'user_info': None}
+                    non_existing.append(phone)
+                
+                # Smart delay: shorter for small batches, longer for large ones
+                if len(phone_numbers) > 5:
+                    delay = 0.5  # 0.5 second delay for large batches
+                else:
+                    delay = 0.2  # 0.2 second delay for small batches
+                
+                await asyncio.sleep(delay)
                     
             except Exception as e:
                 logger.error(f"Error checking {phone}: {e}")
-                return {'phone': phone, 'status': 'error', 'user_info': None}
-        
-        # Control concurrent requests to avoid rate limiting
-        semaphore = asyncio.Semaphore(15)  # Allow 15 concurrent requests
-        
-        async def check_with_rate_limit(phone: str):
-            async with semaphore:
-                # Add small delay to prevent overwhelming the API
-                await asyncio.sleep(0.1)
-                return await check_single_number(phone)
-        
-        # Create tasks for all phone numbers
-        logger.info(f"🚀 Starting concurrent check of {len(phone_numbers)} numbers...")
-        start_time = asyncio.get_event_loop().time()
-        
-        tasks = [check_with_rate_limit(phone) for phone in phone_numbers]
-        
-        # Execute all tasks concurrently
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+                non_existing.append(phone)
         
         end_time = asyncio.get_event_loop().time()
-        logger.info(f"⚡ Concurrent processing completed in {end_time - start_time:.2f} seconds")
-        
-        # Process results
-        existing_with_info = []
-        non_existing = []
-        
-        for result in results:
-            if isinstance(result, Exception):
-                logger.error(f"Task failed: {result}")
-                continue
-                
-            if result['status'] == 'found':
-                existing_with_info.append(result['user_info'])
-            else:
-                non_existing.append(result['phone'])
-        
+        logger.info(f"✅ Sequential processing completed in {end_time - start_time:.2f} seconds")
         logger.info(f"📊 Results: {len(existing_with_info)} found, {len(non_existing)} not found")
+        
         return existing_with_info, non_existing
     
     async def _get_user_info(self, formatted_phone: str) -> dict:
@@ -716,55 +717,10 @@ class TelegramChecker:
             except Exception:
                 continue
         
-        # Method 3: Contacts import as final check
-        try:
-            from telethon.tl.functions.contacts import ImportContactsRequest, DeleteContactsRequest
-            from telethon.tl.types import InputPhoneContact
-            
-            import time
-            client_id = int(time.time() * 1000) % 2147483647
-            
-            contact = InputPhoneContact(
-                client_id=client_id,
-                phone=formatted_phone.replace('+', ''),
-                first_name="Check",
-                last_name=""
-            )
-            
-            result = await self.client(ImportContactsRequest([contact]))
-            
-            if result and result.users and len(result.users) > 0:
-                user = result.users[0]
-                
-                if hasattr(user, 'id') and user.id:
-                    user_info = {
-                        'user_id': user.id,
-                        'first_name': getattr(user, 'first_name', ''),
-                        'last_name': getattr(user, 'last_name', ''),
-                        'username': getattr(user, 'username', ''),
-                        'phone': getattr(user, 'phone', '')
-                    }
-                    
-                    # Clean up
-                    try:
-                        await self.client(DeleteContactsRequest(result.users))
-                    except:
-                        pass
-                    
-                    logger.info(f"Found via contacts import: {formatted_phone} -> {user_info}")
-                    return user_info
-            
-            # Clean up even if not found
-            try:
-                if result and result.users:
-                    await self.client(DeleteContactsRequest(result.users))
-            except:
-                pass
-                
-        except Exception as e:
-            logger.debug(f"Contacts import failed for {formatted_phone}: {str(e)}")
+        # Skip contacts import to avoid flood waits - it causes heavy rate limiting
+        # Only use direct entity lookup and alternative formats
         
-        logger.debug(f"No user info found for: {formatted_phone}")
+        logger.debug(f"❌ All methods exhausted for {formatted_phone} - not found")
         return None
     
     async def _advanced_phone_check(self, formatted_phone: str) -> bool:
@@ -1091,9 +1047,10 @@ async def check_phone_numbers(update: Update, context: ContextTypes.DEFAULT_TYPE
         await update.message.reply_text(await get_text(user_id, 'invalid_numbers'))
         return
     
-    # Send processing message with progress updates
+    # Send processing message with realistic time estimate
+    estimated_time = len(phone_numbers) * 0.5  # 0.5 seconds per number
     processing_msg = await update.message.reply_text(
-        f"🚀 Processing {len(phone_numbers)} numbers concurrently...\n⏱️ Expected time: ~{max(3, len(phone_numbers)//10)} seconds"
+        f"🔍 Processing {len(phone_numbers)} numbers...\n⏱️ Expected time: ~{int(estimated_time)} seconds\n🛡️ Using safe mode to avoid API limits"
     )
     
     try:
@@ -1135,33 +1092,8 @@ async def check_phone_numbers(update: Update, context: ContextTypes.DEFAULT_TYPE
             await processing_msg.edit_text(response_text)
             return
         
-        # Check phone numbers with progress updates
-        import asyncio
-        
-        # Create a task for checking numbers
-        check_task = asyncio.create_task(checker.check_phone_numbers(phone_numbers))
-        
-        # Progress update loop
-        start_time = asyncio.get_event_loop().time()
-        progress_count = 0
-        
-        while not check_task.done():
-            await asyncio.sleep(2)  # Update every 2 seconds
-            elapsed = asyncio.get_event_loop().time() - start_time
-            progress_count += 1
-            
-            try:
-                await processing_msg.edit_text(
-                    f"🔍 Concurrent checking in progress...\n"
-                    f"📊 Numbers: {len(phone_numbers)}\n"
-                    f"⏱️ Elapsed: {elapsed:.1f}s\n"
-                    f"⚡ Using parallel processing for speed"
-                )
-            except:
-                pass  # Ignore edit errors
-        
-        # Get the results
-        existing_users, non_existing = await check_task
+        # Check phone numbers sequentially
+        existing_users, non_existing = await checker.check_phone_numbers(phone_numbers)
         
         # Build single response with color coding
         response = (await get_text(user_id, 'results')).format(len(phone_numbers)) + "\n\n"
