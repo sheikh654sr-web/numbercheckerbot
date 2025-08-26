@@ -14,10 +14,11 @@ API_ID = 22969300
 API_HASH = "e78b8ed26aa341bd36690bdc13d2159a"
 
 async def generate_session():
-    """Generate session string interactively"""
-    print("🔐 Generating Telethon Session String...")
-    print("📱 You'll need to enter your phone number and verification code")
-    print("-" * 50)
+    """Generate USER session string for phone number checking"""
+    print("🔐 Generating USER Session String for Phone Checking...")
+    print("📱 IMPORTANT: Use YOUR personal phone number, NOT a bot!")
+    print("⚠️  This creates a USER session to check other phone numbers")
+    print("-" * 60)
     
     # Create client with string session
     client = TelegramClient(StringSession(), API_ID, API_HASH)

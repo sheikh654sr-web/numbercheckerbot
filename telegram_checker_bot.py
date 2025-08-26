@@ -551,12 +551,19 @@ class TelegramChecker:
             
             if await self.client.is_user_authorized():
                 logger.info("🎉 Client fully authenticated with session!")
-                # Test the session
+                # Test the session and check if it's a user session
                 try:
                     me = await self.client.get_me()
-                    logger.info(f"✅ Session active for: {me.first_name} (ID: {me.id})")
-                except:
-                    logger.warning("⚠️ Session exists but might be expired")
+                    if hasattr(me, 'bot') and me.bot:
+                        logger.error(f"❌ BOT SESSION DETECTED: {me.first_name} (ID: {me.id})")
+                        logger.error("❌ Bot sessions cannot check phone numbers!")
+                        logger.error("💡 You need a USER session, not a bot session")
+                        self.client = None
+                        return False
+                    else:
+                        logger.info(f"✅ USER Session active: {me.first_name} (ID: {me.id})")
+                except Exception as e:
+                    logger.warning(f"⚠️ Session test failed: {e}")
             else:
                 logger.warning("⚡ Client connected but not authorized - limited functionality")
                 if not session_string:
@@ -1077,41 +1084,18 @@ async def check_phone_numbers(update: Update, context: ContextTypes.DEFAULT_TYPE
     
     try:
         if not checker or not checker.client:
-            # Use basic phone number analysis
-            await processing_msg.edit_text("🔍 Analyzing phone numbers...")
-            
-            # Basic phone number validation and formatting
-            results = []
-            for i, phone in enumerate(phone_numbers, 1):
-                # Basic phone number validation
-                cleaned_phone = ''.join(filter(str.isdigit, phone))
-                
-                # Simulate checking based on pattern analysis
-                if len(cleaned_phone) >= 10:
-                    # Generate simulated result based on phone number patterns
-                    if cleaned_phone[-1] in ['0', '1', '2', '3', '4']:  # Roughly 50% exist
-                        results.append(f"🟡 {phone} - Likely exists (User ID: {cleaned_phone[-6:]})")
-                    else:
-                        results.append(f"⚫ {phone} - Not found")
-                else:
-                    results.append(f"❌ {phone} - Invalid format")
-            
-            # Build response
-            response_text = f"""📱 **Phone Number Analysis Results**
-
-📊 **Total checked:** {len(phone_numbers)}
-
-{chr(10).join(results[:20])}
-{"..." if len(results) > 20 else ""}
-
-📈 **Summary:**
-🟡 Likely exist: {sum(1 for r in results if '🟡' in r)}
-⚫ Not found: {sum(1 for r in results if '⚫' in r)}
-❌ Invalid: {sum(1 for r in results if '❌' in r)}
-
-⚡ **Analysis based on number patterns**"""
-            
-            await processing_msg.edit_text(response_text)
+            await processing_msg.edit_text(
+                "❌ **Phone checking unavailable**\n\n"
+                "🚨 **REASON:** Bot session detected or no valid user session\n\n"
+                "📝 **TO FIX:**\n"
+                "1. Run `python generate_session.py` locally\n"
+                "2. Enter YOUR phone number (not bot)\n" 
+                "3. Enter verification code\n"
+                "4. Copy the session string\n"
+                "5. Add to Render environment:\n"
+                "   `TELETHON_SESSION=your_session_string`\n\n"
+                "⚠️ **IMPORTANT:** Must be USER session, not BOT session!"
+            )
             return
         
         # Check phone numbers sequentially
