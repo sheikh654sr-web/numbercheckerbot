@@ -641,6 +641,10 @@ class TelegramChecker:
                                 logger.debug(f"API error for {fmt}: {str(e)}")
                                 continue
                 
+                except Exception as main_e:
+                    logger.error(f"Main error for {formatted_phone}: {main_e}")
+                    user_info = None
+                
                 # Add to appropriate list
                 if user_info:
                     existing_with_info.append({
