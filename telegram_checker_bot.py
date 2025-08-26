@@ -657,11 +657,14 @@ class TelegramChecker:
                                 matched_phone, matched_formatted = phone_map[user.client_id]
                             else:
                                 # Fallback: match by phone number
-                                user_phone = getattr(user, 'phone', '')
-                                for client_id, (orig_phone, formatted_phone) in phone_map.items():
-                                    if user_phone in formatted_phone.replace('+', '') or formatted_phone.replace('+', '') in user_phone:
-                                        matched_phone, matched_formatted = orig_phone, formatted_phone
-                                        break
+                                user_phone = getattr(user, 'phone', '') or ''
+                                if user_phone:  # Only try matching if user_phone exists
+                                    for client_id, (orig_phone, formatted_phone) in phone_map.items():
+                                        if formatted_phone and user_phone:  # Ensure both are not None
+                                            formatted_clean = formatted_phone.replace('+', '')
+                                            if user_phone in formatted_clean or formatted_clean in user_phone:
+                                                matched_phone, matched_formatted = orig_phone, formatted_phone
+                                                break
                             
                             if matched_phone:
                                 existing_with_info.append({
@@ -748,6 +751,11 @@ class TelegramChecker:
     
     async def _get_user_info(self, formatted_phone: str) -> dict:
         """Get user information if phone number exists on Telegram"""
+        
+        # Validate input
+        if not formatted_phone:
+            logger.debug("Empty phone number provided")
+            return None
         
         # Check if client is authorized for accurate checking
         if not await self.client.is_user_authorized():
@@ -1013,6 +1021,10 @@ class TelegramChecker:
     def format_phone_number(self, phone: str) -> str:
         """Simple phone number formatting - accepts any format"""
         try:
+            # Handle None or empty phone
+            if not phone:
+                return ''
+            
             # Remove any non-digit characters except +
             cleaned = re.sub(r'[^\d+]', '', phone)
             
