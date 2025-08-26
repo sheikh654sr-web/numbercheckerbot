@@ -578,42 +578,81 @@ class TelegramChecker:
             logger.error("Telethon client not initialized")
             return existing_with_info, non_existing
         
-        sem = asyncio.Semaphore(2)  # Limit to 2 concurrent checks
+        from telethon.tl.functions.contacts import ImportContactsRequest, DeleteContactsRequest
+        from telethon.tl.types import InputPhoneContact
+        import time
         
-        async def check_single(phone):
-            async with sem:
-                try:
-                    formatted_phone = self.format_phone_number(phone)
-                    if not formatted_phone:
-                        return phone, None, None
-                    
-                    logger.info(f"Checking phone number: {formatted_phone}")
-                    user_info = await self._get_user_info(formatted_phone)
-                    
-                    await asyncio.sleep(1)  # Small delay to avoid rate limits
-                    
-                    return phone, formatted_phone, user_info
-                except Exception as e:
-                    logger.error(f"Error checking phone {phone}: {e}")
-                    return phone, None, None
+        # Process in batches of 10
+        batch_size = 10
+        batches = [phone_numbers[i:i + batch_size] for i in range(0, len(phone_numbers), batch_size)]
         
-        tasks = [check_single(phone) for phone in phone_numbers]
-        results = await asyncio.gather(*tasks)
-        
-        for orig_phone, formatted_phone, user_info in results:
-            if user_info:
-                existing_with_info.append({
-                    'phone': orig_phone,
-                    'formatted_phone': formatted_phone or '',
-                    'user_id': user_info.get('user_id'),
-                    'first_name': user_info.get('first_name', ''),
-                    'last_name': user_info.get('last_name', ''),
-                    'username': user_info.get('username', '')
-                })
-                logger.info(f"✅ Found user: {formatted_phone} -> ID: {user_info.get('user_id')}")
-            else:
-                non_existing.append(orig_phone)
-                logger.info(f"❌ Not found: {formatted_phone or orig_phone}")
+        for batch_idx, batch in enumerate(batches):
+            logger.info(f"Processing batch {batch_idx + 1}/{len(batches)} with {len(batch)} numbers")
+            
+            contacts = []
+            phone_map = {}  # client_id to orig_phone
+            
+            for i, phone in enumerate(batch):
+                formatted_phone = self.format_phone_number(phone)
+                if not formatted_phone:
+                    non_existing.append(phone)
+                    continue
+                
+                client_id = int(time.time() * 1000 + i) % 2147483647
+                contact = InputPhoneContact(
+                    client_id=client_id,
+                    phone=formatted_phone.replace('+', ''),
+                    first_name=f"Check_{batch_idx}_{i}",
+                    last_name=""
+                )
+                contacts.append(contact)
+                phone_map[client_id] = (phone, formatted_phone)
+            
+            if not contacts:
+                continue
+            
+            try:
+                # Import batch
+                result = await self.client(ImportContactsRequest(contacts))
+                
+                imported_users = result.users if result and result.users else []
+                
+                # Process existing
+                imported_ids = set()
+                for user in imported_users:
+                    if hasattr(user, 'id') and user.id:
+                        orig_phone, formatted_phone = phone_map.get(user.client_id, (None, None))
+                        if orig_phone:
+                            existing_with_info.append({
+                                'phone': orig_phone,
+                                'formatted_phone': formatted_phone,
+                                'user_id': user.id,
+                                'first_name': getattr(user, 'first_name', ''),
+                                'last_name': getattr(user, 'last_name', ''),
+                                'username': getattr(user, 'username', '')
+                            })
+                            logger.info(f"✅ Found (batch import): {formatted_phone} -> ID: {user.id}")
+                            imported_ids.add(user.client_id)
+                
+                # Non-imported are not found
+                for client_id, (orig_phone, formatted_phone) in phone_map.items():
+                    if client_id not in imported_ids:
+                        non_existing.append(orig_phone)
+                        logger.info(f"❌ Not found: {formatted_phone}")
+                
+                # Cleanup
+                if imported_users:
+                    await self.client(DeleteContactsRequest(imported_users))
+                
+            except Exception as e:
+                logger.error(f"Batch {batch_idx + 1} failed: {e}")
+                # Fallback: mark all in batch as not found
+                for phone in batch:
+                    non_existing.append(phone)
+            
+            # Delay between batches to avoid flood
+            if batch_idx < len(batches) - 1:
+                await asyncio.sleep(5)  # 5 second delay between batches
         
         return existing_with_info, non_existing
     
