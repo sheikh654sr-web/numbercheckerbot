@@ -19,6 +19,7 @@ CREATE TABLE IF NOT EXISTS access_requests (
     user_id BIGINT NOT NULL,                  -- Telegram User ID
     username TEXT,                            -- Telegram Username
     first_name TEXT,                          -- User's first name
+    language TEXT DEFAULT 'en',              -- User's preferred language
     request_message TEXT,                     -- Optional request message
     status TEXT DEFAULT 'pending',           -- Request status: pending, approved, rejected
     admin_response TEXT,                      -- Admin's response message (optional)
