@@ -571,7 +571,7 @@ class TelegramChecker:
             return False
     
     async def check_phone_numbers(self, phone_numbers: List[str]) -> Tuple[List[dict], List[str]]:
-        """Check phone numbers using instant method from reference code"""
+        """Check phone numbers using backup method with parallel processing for speed"""
         existing_with_info = []
         non_existing = []
         
@@ -579,80 +579,33 @@ class TelegramChecker:
             logger.error("Telethon client not initialized")
             return existing_with_info, non_existing
         
-        from telethon.tl.functions.contacts import ImportContactsRequest, DeleteContactsRequest
-        from telethon.tl.types import InputPhoneContact
-        from telethon.errors import FloodWaitError, InputUserDeactivatedError
-        import time
-        
-        # Single number checking like the reference code - instant approach
-        async def check_single_number(phone, retries=3):
-            try:
-                formatted_phone = self.format_phone_number(phone)
-                if not formatted_phone:
-                    return phone, None
-                
-                for attempt in range(1, retries + 1):
-                    try:
-                        # Use simple contact import like reference code
-                        contact = InputPhoneContact(
-                            client_id=0, 
-                            phone=formatted_phone.replace('+', ''), 
-                            first_name="Temp", 
-                            last_name=""
-                        )
-                        result = await self.client(ImportContactsRequest([contact]))
-                        
-                        if result.users:
-                            user = result.users[0]
-                            # Immediate cleanup
-                            try:
-                                await self.client(DeleteContactsRequest(id=[user.id]))
-                            except:
-                                pass
-                            
-                            user_info = {
-                                'user_id': user.id,
-                                'first_name': getattr(user, 'first_name', ''),
-                                'last_name': getattr(user, 'last_name', ''),
-                                'username': getattr(user, 'username', ''),
-                                'phone': getattr(user, 'phone', '')
-                            }
-                            logger.info(f"✅ Found: {formatted_phone} -> ID: {user.id}")
-                            return phone, user_info
-                        else:
-                            logger.info(f"❌ Not found: {formatted_phone}")
-                            return phone, None
-                            
-                    except InputUserDeactivatedError:
-                        logger.info(f"🕸️ Deactivated: {formatted_phone}")
-                        return phone, None
-                        
-                    except FloodWaitError as e:
-                        logger.warning(f"⏳ Flood wait: {e.seconds} sec for {formatted_phone}")
-                        await asyncio.sleep(e.seconds + 1)
-                        
-                    except Exception as e:
-                        logger.warning(f"⚠️ Error for {formatted_phone} on attempt {attempt}: {e}")
-                        if attempt < retries:
-                            await asyncio.sleep(1)
-                
-                return phone, None
-                
-            except Exception as e:
-                logger.error(f"Error checking {phone}: {e}")
-                return phone, None
-        
-        # Process numbers with controlled concurrency
+        # Parallel processing with controlled concurrency
         semaphore = asyncio.Semaphore(3)  # Max 3 concurrent checks
         
-        async def check_with_semaphore(phone):
+        async def check_single_phone(phone):
             async with semaphore:
-                result = await check_single_number(phone)
-                await asyncio.sleep(0.5)  # Small delay between checks
-                return result
+                try:
+                    # Format phone number
+                    formatted_phone = self.format_phone_number(phone)
+                    if not formatted_phone:
+                        return phone, None
+                    
+                    logger.info(f"Checking phone number: {formatted_phone}")
+                    user_info = await self._get_user_info(formatted_phone)
+                    
+                    if user_info:
+                        logger.info(f"✅ Found user: {formatted_phone} -> ID: {user_info.get('user_id')}")
+                        return phone, user_info
+                    else:
+                        logger.info(f"❌ Not found: {formatted_phone}")
+                        return phone, None
+                        
+                except Exception as e:
+                    logger.error(f"Error checking phone {phone}: {e}")
+                    return phone, None
         
-        # Execute all checks
-        tasks = [check_with_semaphore(phone) for phone in phone_numbers]
+        # Execute all checks in parallel
+        tasks = [check_single_phone(phone) for phone in phone_numbers]
         results = await asyncio.gather(*tasks, return_exceptions=True)
         
         # Process results
@@ -661,18 +614,18 @@ class TelegramChecker:
                 logger.error(f"Task failed: {result}")
                 continue
                 
-            orig_phone, user_info = result
+            phone, user_info = result
             if user_info:
                 existing_with_info.append({
-                    'phone': orig_phone,
-                    'formatted_phone': self.format_phone_number(orig_phone),
+                    'phone': phone,
+                    'formatted_phone': self.format_phone_number(phone),
                     'user_id': user_info.get('user_id'),
                     'first_name': user_info.get('first_name', ''),
                     'last_name': user_info.get('last_name', ''),
                     'username': user_info.get('username', '')
                 })
             else:
-                non_existing.append(orig_phone)
+                non_existing.append(phone)
         
         return existing_with_info, non_existing
     
