@@ -25,6 +25,7 @@ CREATE TABLE IF NOT EXISTS access_requests (
     admin_response TEXT,                      -- Admin's response message (optional)
     requested_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     processed_at TIMESTAMP WITH TIME ZONE,   -- When admin processed the request
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),  -- Last update timestamp
     expires_at TIMESTAMP WITH TIME ZONE,     -- Request expiration (3 hours from creation)
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
