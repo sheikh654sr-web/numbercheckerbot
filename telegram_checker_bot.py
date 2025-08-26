@@ -537,23 +537,40 @@ class TelegramChecker:
             from telethon.sessions import StringSession
             import asyncio
             
-            # Force create client without authentication first
-            self.client = TelegramClient(StringSession(), self.api_id, self.api_hash)
+            # Try to get session string from environment
+            session_string = os.getenv('TELETHON_SESSION', '')
             
-            # Connect and try to authenticate
-            await asyncio.wait_for(self.client.connect(), timeout=10.0)
-            
-            if not await self.client.is_user_authorized():
-                logger.info("⚡ Client connected but not authorized - limited functionality")
-                # Try to use without full auth (some methods might still work)
+            if session_string:
+                logger.info("🔐 Using session string from environment")
+                session = StringSession(session_string)
             else:
-                logger.info("🎉 Client fully authenticated!")
+                logger.info("⚠️ No session string found - creating new session")
+                session = StringSession()
+            
+            # Create client with session
+            self.client = TelegramClient(session, self.api_id, self.api_hash)
+            
+            # Connect with timeout
+            await asyncio.wait_for(self.client.connect(), timeout=15.0)
+            
+            if await self.client.is_user_authorized():
+                logger.info("🎉 Client fully authenticated with session!")
+                # Test the session
+                try:
+                    me = await self.client.get_me()
+                    logger.info(f"✅ Session active for: {me.first_name} (ID: {me.id})")
+                except:
+                    logger.warning("⚠️ Session exists but might be expired")
+            else:
+                logger.warning("⚡ Client connected but not authorized - limited functionality")
+                if not session_string:
+                    logger.info("💡 To enable full functionality, generate session string with generate_session.py")
                 
             logger.info("✅ Telethon client ready for phone checking")
             return True
                 
         except Exception as e:
-            logger.warning(f"⚠️ Telethon failed: {e}")
+            logger.warning(f"⚠️ Telethon initialization failed: {e}")
             self.client = None
             return False
     
@@ -601,8 +618,13 @@ class TelegramChecker:
     async def _get_user_info(self, formatted_phone: str) -> dict:
         """Get user information if phone number exists on Telegram"""
         
-        # Method 1: Direct entity lookup
+        # Check if client is authorized for accurate checking
+        if not await self.client.is_user_authorized():
+            logger.warning(f"⚠️ Checking {formatted_phone} without authorization - may be inaccurate")
+        
+        # Method 1: Direct entity lookup with enhanced error handling
         try:
+            logger.debug(f"🔍 Trying direct lookup: {formatted_phone}")
             entity = await self.client.get_entity(formatted_phone)
             if entity:
                 # Check if it's a valid user (not deleted)
@@ -619,20 +641,22 @@ class TelegramChecker:
                     'phone': getattr(entity, 'phone', '')
                 }
                 
-                logger.info(f"Found via direct entity: {formatted_phone} -> {user_info}")
+                logger.info(f"✅ Found via direct entity: {formatted_phone} -> ID: {user_info['user_id']}")
                 return user_info
                 
         except Exception as e:
             error_msg = str(e).lower()
+            logger.debug(f"Direct lookup error for {formatted_phone}: {str(e)}")
             
             if any(keyword in error_msg for keyword in [
                 'no user has', 'user not found', 'phone number invalid',
-                'no such user', 'username not occupied', 'phone_number_invalid'
+                'no such user', 'username not occupied', 'phone_number_invalid',
+                'phone_number_banned', 'phone_number_flood'
             ]):
-                logger.debug(f"Definitely does not exist: {formatted_phone}")
+                logger.debug(f"❌ Confirmed not exists: {formatted_phone}")
                 return None
             else:
-                logger.debug(f"Other error for {formatted_phone}: {str(e)}")
+                logger.debug(f"⚠️ API error (trying alternatives): {str(e)}")
         
         # Method 2: Try alternative formats
         alternative_formats = self._get_alternative_formats(formatted_phone)
