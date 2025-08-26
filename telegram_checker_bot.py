@@ -579,82 +579,145 @@ class TelegramChecker:
             logger.error("Telethon client not initialized")
             return existing_with_info, non_existing
         
-        # Smart batch processing using contact import for speed
-        from telethon.tl.functions.contacts import ImportContactsRequest, DeleteContactsRequest
-        from telethon.tl.types import InputPhoneContact
-        from telethon.errors import FloodWaitError
-        import time
-        
-        # Prepare all contacts at once
-        contacts = []
-        phone_map = {}  # client_id to original_phone mapping
-        
-        for i, phone in enumerate(phone_numbers):
-            formatted_phone = self.format_phone_number(phone)
-            if not formatted_phone:
-                non_existing.append(phone)
-                continue
-            
-            client_id = int(time.time() * 1000 + i) % 2147483647
-            contact = InputPhoneContact(
-                client_id=client_id,
-                phone=formatted_phone.replace('+', ''),
-                first_name=f"Temp{i}",
-                last_name=""
-            )
-            contacts.append(contact)
-            phone_map[client_id] = (phone, formatted_phone)
-        
-        if not contacts:
-            return existing_with_info, non_existing
-        
-        try:
-            logger.info(f"Batch importing {len(contacts)} contacts...")
-            result = await self.client(ImportContactsRequest(contacts))
-            
-            imported_users = result.users if result and result.users else []
-            imported_client_ids = set()
-            
-            # Process found users
-            for user in imported_users:
-                if hasattr(user, 'id') and user.id and hasattr(user, 'client_id'):
-                    orig_phone, formatted_phone = phone_map.get(user.client_id, (None, None))
-                    if orig_phone:
+        # Hybrid approach: Direct checking for single numbers, batch for multiple
+        if len(phone_numbers) == 1:
+            # Single number - use accurate method from backup
+            phone = phone_numbers[0]
+            try:
+                formatted_phone = self.format_phone_number(phone)
+                if not formatted_phone:
+                    non_existing.append(phone)
+                else:
+                    logger.info(f"Checking single phone number: {formatted_phone}")
+                    user_info = await self._get_user_info(formatted_phone)
+                    
+                    if user_info:
                         existing_with_info.append({
-                            'phone': orig_phone,
+                            'phone': phone,
                             'formatted_phone': formatted_phone,
-                            'user_id': user.id,
-                            'first_name': getattr(user, 'first_name', ''),
-                            'last_name': getattr(user, 'last_name', ''),
-                            'username': getattr(user, 'username', '')
+                            'user_id': user_info.get('user_id'),
+                            'first_name': user_info.get('first_name', ''),
+                            'last_name': user_info.get('last_name', ''),
+                            'username': user_info.get('username', '')
                         })
-                        imported_client_ids.add(user.client_id)
-                        logger.info(f"✅ Found: {formatted_phone} -> ID: {user.id}")
+                        logger.info(f"✅ Found user: {formatted_phone} -> ID: {user_info.get('user_id')}")
+                    else:
+                        non_existing.append(phone)
+                        logger.info(f"❌ Not found: {formatted_phone}")
+            except Exception as e:
+                logger.error(f"Error checking phone {phone}: {e}")
+                non_existing.append(phone)
+        else:
+            # Multiple numbers - use optimized batch processing
+            from telethon.tl.functions.contacts import ImportContactsRequest, DeleteContactsRequest
+            from telethon.tl.types import InputPhoneContact
+            from telethon.errors import FloodWaitError
+            import time
             
-            # Add non-imported as not found
-            for client_id, (orig_phone, formatted_phone) in phone_map.items():
-                if client_id not in imported_client_ids:
-                    non_existing.append(orig_phone)
-                    logger.info(f"❌ Not found: {formatted_phone}")
+            # Prepare all contacts at once
+            contacts = []
+            phone_map = {}  # client_id to original_phone mapping
             
-            # Cleanup imported contacts
-            if imported_users:
+            for i, phone in enumerate(phone_numbers):
+                formatted_phone = self.format_phone_number(phone)
+                if not formatted_phone:
+                    non_existing.append(phone)
+                    continue
+                
+                client_id = int(time.time() * 1000 + i) % 2147483647
+                contact = InputPhoneContact(
+                    client_id=client_id,
+                    phone=formatted_phone.replace('+', ''),
+                    first_name="Check",
+                    last_name=""
+                )
+                contacts.append(contact)
+                phone_map[client_id] = (phone, formatted_phone)
+            
+            if contacts:
                 try:
-                    await self.client(DeleteContactsRequest(imported_users))
-                    logger.info(f"Cleaned up {len(imported_users)} imported contacts")
+                    logger.info(f"Batch importing {len(contacts)} contacts...")
+                    result = await self.client(ImportContactsRequest(contacts))
+                    
+                    imported_users = result.users if result and result.users else []
+                    
+                    # Process found users
+                    for user in imported_users:
+                        if hasattr(user, 'id') and user.id:
+                            # Find matching phone by checking all client_ids
+                            matched_phone = None
+                            matched_formatted = None
+                            
+                            # Check if user has client_id attribute
+                            if hasattr(user, 'client_id') and user.client_id in phone_map:
+                                matched_phone, matched_formatted = phone_map[user.client_id]
+                            else:
+                                # Fallback: match by phone number
+                                user_phone = getattr(user, 'phone', '')
+                                for client_id, (orig_phone, formatted_phone) in phone_map.items():
+                                    if user_phone in formatted_phone.replace('+', '') or formatted_phone.replace('+', '') in user_phone:
+                                        matched_phone, matched_formatted = orig_phone, formatted_phone
+                                        break
+                            
+                            if matched_phone:
+                                existing_with_info.append({
+                                    'phone': matched_phone,
+                                    'formatted_phone': matched_formatted,
+                                    'user_id': user.id,
+                                    'first_name': getattr(user, 'first_name', ''),
+                                    'last_name': getattr(user, 'last_name', ''),
+                                    'username': getattr(user, 'username', '')
+                                })
+                                logger.info(f"✅ Found: {matched_formatted} -> ID: {user.id}")
+                                # Remove from phone_map so it's not marked as not found
+                                phone_map = {k: v for k, v in phone_map.items() if v[0] != matched_phone}
+                    
+                    # Add remaining as not found
+                    for client_id, (orig_phone, formatted_phone) in phone_map.items():
+                        non_existing.append(orig_phone)
+                        logger.info(f"❌ Not found: {formatted_phone}")
+                    
+                    # Cleanup imported contacts
+                    if imported_users:
+                        try:
+                            await self.client(DeleteContactsRequest(imported_users))
+                            logger.info(f"Cleaned up {len(imported_users)} imported contacts")
+                        except Exception as e:
+                            logger.warning(f"Cleanup failed: {e}")
+                
+                except FloodWaitError as e:
+                    logger.warning(f"Flood wait: {e.seconds} seconds - falling back to individual checks")
+                    # Fallback to individual checking with delay
+                    for phone in phone_numbers:
+                        try:
+                            formatted_phone = self.format_phone_number(phone)
+                            if not formatted_phone:
+                                non_existing.append(phone)
+                                continue
+                            
+                            user_info = await self._get_user_info(formatted_phone)
+                            if user_info:
+                                existing_with_info.append({
+                                    'phone': phone,
+                                    'formatted_phone': formatted_phone,
+                                    'user_id': user_info.get('user_id'),
+                                    'first_name': user_info.get('first_name', ''),
+                                    'last_name': user_info.get('last_name', ''),
+                                    'username': user_info.get('username', '')
+                                })
+                            else:
+                                non_existing.append(phone)
+                            
+                            await asyncio.sleep(3)  # Delay to avoid further flood waits
+                        except Exception as e:
+                            logger.error(f"Error checking {phone}: {e}")
+                            non_existing.append(phone)
+                
                 except Exception as e:
-                    logger.warning(f"Cleanup failed: {e}")
-            
-        except FloodWaitError as e:
-            logger.warning(f"Flood wait: {e.seconds} seconds")
-            # Fallback: mark all as not found during flood wait
-            for client_id, (orig_phone, _) in phone_map.items():
-                non_existing.append(orig_phone)
-        except Exception as e:
-            logger.error(f"Batch import failed: {e}")
-            # Fallback: mark all as not found
-            for client_id, (orig_phone, _) in phone_map.items():
-                non_existing.append(orig_phone)
+                    logger.error(f"Batch import failed: {e}")
+                    # Fallback: mark all as not found
+                    for client_id, (orig_phone, _) in phone_map.items():
+                        non_existing.append(orig_phone)
         
         results = []  # For compatibility with existing code
         
