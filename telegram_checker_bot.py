@@ -479,7 +479,7 @@ async def update_access_request(request_id: int, status: str):
         if request.data:
             user_id = request.data[0]['user_id']
             supabase.table('users').upsert({
-                'user_id': user_id,
+                'id': user_id,
                 'access_status': status,
                 'updated_at': datetime.now().isoformat()
             }).execute()
