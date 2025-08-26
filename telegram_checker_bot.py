@@ -426,9 +426,9 @@ async def check_request_cooldown(user_id: int) -> int:
         return 0
         
     try:
-        result = supabase.table('access_requests').select('created_at').eq('user_id', user_id).order('created_at', desc=True).limit(1).execute()
+        result = supabase.table('access_requests').select('requested_at').eq('user_id', user_id).order('requested_at', desc=True).limit(1).execute()
         if result.data:
-            last_request = datetime.fromisoformat(result.data[0]['created_at'].replace('Z', '+00:00'))
+            last_request = datetime.fromisoformat(result.data[0]['requested_at'].replace('Z', '+00:00'))
             cooldown_end = last_request + timedelta(hours=3)
             if datetime.now() < cooldown_end:
                 remaining = cooldown_end - datetime.now()
@@ -449,8 +449,7 @@ async def create_access_request(user_id: int, username: str, first_name: str, la
             'username': username,
             'first_name': first_name,
             'language': language,
-            'status': 'pending',
-            'created_at': datetime.now().isoformat()
+            'status': 'pending'
         }).execute()
         return True
     except Exception as e:
@@ -1452,8 +1451,250 @@ async def handle_admin_callback(update: Update, context: ContextTypes.DEFAULT_TY
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Help command handler with localized text"""
     user_id = update.effective_user.id
-    help_text = await get_text(user_id, 'help')
-    await update.message.reply_text(help_text)
+    
+    # Show admin commands if user is admin
+    if user_id == ADMIN_USER_ID:
+        admin_help = """🔧 **Admin Commands:**
+
+/adduser <user_id> - Add user directly
+/removeuser <user_id> - Remove user access
+/listusers - List all users
+/pending - Show pending requests
+
+**Regular Commands:**"""
+        help_text = admin_help + "\n" + await get_text(user_id, 'help')
+    else:
+        help_text = await get_text(user_id, 'help')
+    
+    await update.message.reply_text(help_text, parse_mode='Markdown')
+
+async def admin_add_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin command to add user directly"""
+    user_id = update.effective_user.id
+    
+    # Check if user is admin
+    if user_id != ADMIN_USER_ID:
+        await update.message.reply_text("❌ Admin only command")
+        return
+    
+    # Check if user_id is provided
+    if not context.args or len(context.args) != 1:
+        await update.message.reply_text("Usage: /adduser <user_id>\nExample: /adduser 123456789")
+        return
+    
+    try:
+        target_user_id = int(context.args[0])
+    except ValueError:
+        await update.message.reply_text("❌ Invalid user ID. Please provide a numeric user ID.")
+        return
+    
+    # Add user to database
+    try:
+        if supabase:
+            # Upsert user with approved status
+            supabase.table('users').upsert({
+                'id': target_user_id,
+                'access_status': 'approved',
+                'updated_at': datetime.now().isoformat()
+            }).execute()
+            
+            # Log admin action
+            supabase.table('admin_actions').insert({
+                'admin_id': user_id,
+                'action_type': 'add_user',
+                'target_user_id': target_user_id,
+                'details': {'method': 'direct_add'}
+            }).execute()
+        else:
+            # Fallback to memory storage
+            if target_user_id not in memory_users:
+                memory_users[target_user_id] = {}
+            memory_users[target_user_id]['access_status'] = 'approved'
+        
+        await update.message.reply_text(f"✅ User {target_user_id} has been added and approved!")
+        
+        # Try to notify the user
+        try:
+            await context.bot.send_message(
+                chat_id=target_user_id,
+                text="🎉 You have been granted access to the Telegram Number Checker Bot!\n\nYou can now use all bot features. Send /start to begin."
+            )
+            await update.message.reply_text(f"📤 User {target_user_id} has been notified.")
+        except Exception as e:
+            await update.message.reply_text(f"⚠️ User added but notification failed: {str(e)}")
+            
+    except Exception as e:
+        logger.error(f"Error adding user {target_user_id}: {e}")
+        await update.message.reply_text(f"❌ Error adding user: {str(e)}")
+
+async def admin_remove_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin command to remove user access"""
+    user_id = update.effective_user.id
+    
+    # Check if user is admin
+    if user_id != ADMIN_USER_ID:
+        await update.message.reply_text("❌ Admin only command")
+        return
+    
+    # Check if user_id is provided
+    if not context.args or len(context.args) != 1:
+        await update.message.reply_text("Usage: /removeuser <user_id>\nExample: /removeuser 123456789")
+        return
+    
+    try:
+        target_user_id = int(context.args[0])
+    except ValueError:
+        await update.message.reply_text("❌ Invalid user ID. Please provide a numeric user ID.")
+        return
+    
+    # Remove user access
+    try:
+        if supabase:
+            # Update user status to rejected
+            supabase.table('users').upsert({
+                'id': target_user_id,
+                'access_status': 'rejected',
+                'updated_at': datetime.now().isoformat()
+            }).execute()
+            
+            # Log admin action
+            supabase.table('admin_actions').insert({
+                'admin_id': user_id,
+                'action_type': 'remove_user',
+                'target_user_id': target_user_id,
+                'details': {'method': 'direct_remove'}
+            }).execute()
+        else:
+            # Fallback to memory storage
+            if target_user_id in memory_users:
+                memory_users[target_user_id]['access_status'] = 'rejected'
+        
+        await update.message.reply_text(f"✅ User {target_user_id} access has been removed!")
+        
+        # Try to notify the user
+        try:
+            await context.bot.send_message(
+                chat_id=target_user_id,
+                text="❌ Your access to the Telegram Number Checker Bot has been revoked.\n\nContact @{} if you believe this is an error.".format(ADMIN_USERNAME)
+            )
+            await update.message.reply_text(f"📤 User {target_user_id} has been notified.")
+        except Exception as e:
+            await update.message.reply_text(f"⚠️ User removed but notification failed: {str(e)}")
+            
+    except Exception as e:
+        logger.error(f"Error removing user {target_user_id}: {e}")
+        await update.message.reply_text(f"❌ Error removing user: {str(e)}")
+
+async def admin_list_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin command to list all users"""
+    user_id = update.effective_user.id
+    
+    # Check if user is admin
+    if user_id != ADMIN_USER_ID:
+        await update.message.reply_text("❌ Admin only command")
+        return
+    
+    try:
+        if supabase:
+            # Get all users from database
+            result = supabase.table('users').select('id, username, first_name, access_status, created_at').order('created_at', desc=True).limit(50).execute()
+            users = result.data if result.data else []
+        else:
+            # Fallback to memory storage
+            users = [{'id': uid, 'access_status': data.get('access_status', 'pending')} for uid, data in memory_users.items()]
+        
+        if not users:
+            await update.message.reply_text("📭 No users found in database.")
+            return
+        
+        # Build response
+        response = "👥 **User List** (Last 50):\n\n"
+        
+        approved_count = 0
+        pending_count = 0
+        rejected_count = 0
+        
+        for user in users:
+            status = user.get('access_status', 'pending')
+            user_id_str = str(user['id'])
+            username = user.get('username', 'No username')
+            first_name = user.get('first_name', 'No name')
+            
+            if status == 'approved':
+                status_emoji = "✅"
+                approved_count += 1
+            elif status == 'pending':
+                status_emoji = "⏳"
+                pending_count += 1
+            else:
+                status_emoji = "❌"
+                rejected_count += 1
+            
+            response += f"{status_emoji} **{user_id_str}** - {first_name} (@{username})\n"
+        
+        response += f"\n📊 **Summary:**\n"
+        response += f"✅ Approved: {approved_count}\n"
+        response += f"⏳ Pending: {pending_count}\n"
+        response += f"❌ Rejected: {rejected_count}"
+        
+        # Split message if too long
+        if len(response) > 4000:
+            # Send first part
+            await update.message.reply_text(response[:4000] + "...", parse_mode='Markdown')
+            await update.message.reply_text("Message truncated. Use database for full list.", parse_mode='Markdown')
+        else:
+            await update.message.reply_text(response, parse_mode='Markdown')
+            
+    except Exception as e:
+        logger.error(f"Error listing users: {e}")
+        await update.message.reply_text(f"❌ Error listing users: {str(e)}")
+
+async def admin_pending_requests(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin command to show pending requests"""
+    user_id = update.effective_user.id
+    
+    # Check if user is admin
+    if user_id != ADMIN_USER_ID:
+        await update.message.reply_text("❌ Admin only command")
+        return
+    
+    try:
+        if not supabase:
+            await update.message.reply_text("❌ Database not available. Pending requests not stored.")
+            return
+        
+        # Get pending requests
+        result = supabase.table('access_requests').select('*').eq('status', 'pending').order('requested_at', desc=True).limit(20).execute()
+        requests = result.data if result.data else []
+        
+        if not requests:
+            await update.message.reply_text("📭 No pending requests found.")
+            return
+        
+        response = "⏳ **Pending Access Requests:**\n\n"
+        
+        for req in requests:
+            user_id_str = str(req['user_id'])
+            username = req.get('username', 'No username')
+            first_name = req.get('first_name', 'No name')
+            requested_at = req.get('requested_at', 'Unknown time')
+            
+            # Parse and format time
+            try:
+                req_time = datetime.fromisoformat(requested_at.replace('Z', '+00:00'))
+                time_str = req_time.strftime('%Y-%m-%d %H:%M')
+            except:
+                time_str = requested_at
+            
+            response += f"👤 **{user_id_str}** - {first_name} (@{username})\n"
+            response += f"🕐 {time_str}\n"
+            response += f"Use /adduser {user_id_str} to approve\n\n"
+        
+        await update.message.reply_text(response, parse_mode='Markdown')
+        
+    except Exception as e:
+        logger.error(f"Error getting pending requests: {e}")
+        await update.message.reply_text(f"❌ Error getting pending requests: {str(e)}")
 
 async def main():
     """Main function to run the bot"""
@@ -1480,6 +1721,13 @@ async def main():
     # Add handlers
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("help", help_command))
+    
+    # Admin commands
+    application.add_handler(CommandHandler("adduser", admin_add_user))
+    application.add_handler(CommandHandler("removeuser", admin_remove_user))
+    application.add_handler(CommandHandler("listusers", admin_list_users))
+    application.add_handler(CommandHandler("pending", admin_pending_requests))
+    
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     application.add_handler(CallbackQueryHandler(handle_admin_callback))
     

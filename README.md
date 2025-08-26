@@ -84,6 +84,12 @@ PORT=10000
 - Approve/reject requests with inline buttons
 - Users get automatic notifications of approval status
 
+#### Admin Commands:
+- `/adduser <user_id>` - Add user directly with approval
+- `/removeuser <user_id>` - Remove user access  
+- `/listusers` - List all users with their status
+- `/pending` - Show all pending access requests
+
 ## 🔧 Database Schema
 
 ### Users Table
