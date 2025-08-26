@@ -579,37 +579,84 @@ class TelegramChecker:
             logger.error("Telethon client not initialized")
             return existing_with_info, non_existing
         
-        # Sequential processing with minimal delay to avoid flood waits
-        async def check_single_phone(phone):
-            try:
-                # Format phone number
-                formatted_phone = self.format_phone_number(phone)
-                if not formatted_phone:
-                    return phone, None
-                
-                logger.info(f"Checking phone number: {formatted_phone}")
-                user_info = await self._get_user_info(formatted_phone)
-                
-                if user_info:
-                    logger.info(f"✅ Found user: {formatted_phone} -> ID: {user_info.get('user_id')}")
-                    return phone, user_info
-                else:
-                    logger.info(f"❌ Not found: {formatted_phone}")
-                    return phone, None
-                    
-            except Exception as e:
-                logger.error(f"Error checking phone {phone}: {e}")
-                return phone, None
+        # Smart batch processing using contact import for speed
+        from telethon.tl.functions.contacts import ImportContactsRequest, DeleteContactsRequest
+        from telethon.tl.types import InputPhoneContact
+        from telethon.errors import FloodWaitError
+        import time
         
-        # Process numbers sequentially with small delay
-        results = []
+        # Prepare all contacts at once
+        contacts = []
+        phone_map = {}  # client_id to original_phone mapping
+        
         for i, phone in enumerate(phone_numbers):
-            result = await check_single_phone(phone)
-            results.append(result)
+            formatted_phone = self.format_phone_number(phone)
+            if not formatted_phone:
+                non_existing.append(phone)
+                continue
             
-            # Add delay between checks to avoid flood waits
-            if i < len(phone_numbers) - 1:  # Don't delay after last number
-                await asyncio.sleep(2)  # 2 second delay between checks
+            client_id = int(time.time() * 1000 + i) % 2147483647
+            contact = InputPhoneContact(
+                client_id=client_id,
+                phone=formatted_phone.replace('+', ''),
+                first_name=f"Temp{i}",
+                last_name=""
+            )
+            contacts.append(contact)
+            phone_map[client_id] = (phone, formatted_phone)
+        
+        if not contacts:
+            return existing_with_info, non_existing
+        
+        try:
+            logger.info(f"Batch importing {len(contacts)} contacts...")
+            result = await self.client(ImportContactsRequest(contacts))
+            
+            imported_users = result.users if result and result.users else []
+            imported_client_ids = set()
+            
+            # Process found users
+            for user in imported_users:
+                if hasattr(user, 'id') and user.id and hasattr(user, 'client_id'):
+                    orig_phone, formatted_phone = phone_map.get(user.client_id, (None, None))
+                    if orig_phone:
+                        existing_with_info.append({
+                            'phone': orig_phone,
+                            'formatted_phone': formatted_phone,
+                            'user_id': user.id,
+                            'first_name': getattr(user, 'first_name', ''),
+                            'last_name': getattr(user, 'last_name', ''),
+                            'username': getattr(user, 'username', '')
+                        })
+                        imported_client_ids.add(user.client_id)
+                        logger.info(f"✅ Found: {formatted_phone} -> ID: {user.id}")
+            
+            # Add non-imported as not found
+            for client_id, (orig_phone, formatted_phone) in phone_map.items():
+                if client_id not in imported_client_ids:
+                    non_existing.append(orig_phone)
+                    logger.info(f"❌ Not found: {formatted_phone}")
+            
+            # Cleanup imported contacts
+            if imported_users:
+                try:
+                    await self.client(DeleteContactsRequest(imported_users))
+                    logger.info(f"Cleaned up {len(imported_users)} imported contacts")
+                except Exception as e:
+                    logger.warning(f"Cleanup failed: {e}")
+            
+        except FloodWaitError as e:
+            logger.warning(f"Flood wait: {e.seconds} seconds")
+            # Fallback: mark all as not found during flood wait
+            for client_id, (orig_phone, _) in phone_map.items():
+                non_existing.append(orig_phone)
+        except Exception as e:
+            logger.error(f"Batch import failed: {e}")
+            # Fallback: mark all as not found
+            for client_id, (orig_phone, _) in phone_map.items():
+                non_existing.append(orig_phone)
+        
+        results = []  # For compatibility with existing code
         
         # Process results
         for result in results:
