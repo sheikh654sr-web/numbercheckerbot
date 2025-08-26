@@ -162,7 +162,7 @@ This is a major update with:
 
 ## 📄 License
 
-This project is for educational purposes only.
+Professional Telegram phone number verification tool.
 
 ## 👨‍💻 Support
 

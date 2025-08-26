@@ -83,9 +83,7 @@ Examples:
 +8801712345678
 01712345678
 1234567890
-+971501234567
-
-⚠️ For educational purposes only.""",
++971501234567""",
         'help': """🆘 Help
 
 📱 How to use:
@@ -101,9 +99,7 @@ Examples:
 +8801712345678
 01712345678  
 1234567890
-+971501234567
-
-⚠️ For educational purposes only.""",
++971501234567""",
         'processing': "🔍 Checking {} numbers...",
         'results': "📊 Results ({} numbers):",
         'summary': "📈 Summary:",
