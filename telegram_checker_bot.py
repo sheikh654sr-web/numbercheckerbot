@@ -439,21 +439,27 @@ async def check_request_cooldown(user_id: int) -> int:
 
 async def create_access_request(user_id: int, username: str, first_name: str, language: str):
     """Create new access request"""
+    logger.info(f"🔄 Creating access request for user {user_id} ({first_name})")
+    
     if not supabase:
         logger.warning("Supabase not available, request not saved")
         return False
         
     try:
-        supabase.table('access_requests').insert({
+        logger.info(f"📝 Inserting access request into database for user {user_id}")
+        result = supabase.table('access_requests').insert({
             'user_id': user_id,
             'username': username,
             'first_name': first_name,
             'language': language,
             'status': 'pending'
         }).execute()
+        logger.info(f"✅ Access request created successfully for user {user_id}")
+        logger.info(f"📋 Database response: {result.data if hasattr(result, 'data') else 'No data'}")
         return True
     except Exception as e:
-        logger.error(f"Error creating access request: {e}")
+        logger.error(f"❌ Error creating access request for user {user_id}: {e}")
+        logger.error(f"❌ Full error details: {type(e).__name__}: {str(e)}")
         return False
 
 async def update_access_request(request_id: int, status: str):
@@ -1314,8 +1320,11 @@ async def handle_access_request(update: Update, context: ContextTypes.DEFAULT_TY
     user_id = update.effective_user.id
     user = update.effective_user
     
+    logger.info(f"🔄 Processing access request from user {user_id} ({user.first_name})")
+    
     # Check if user already has access
     if await check_user_access(user_id):
+        logger.info(f"✅ User {user_id} already has access")
         await update.message.reply_text("✅ You already have access to the bot!")
         return
     
@@ -1344,6 +1353,7 @@ async def handle_access_request(update: Update, context: ContextTypes.DEFAULT_TY
     
     if success:
         # Send notification to admin
+        logger.info(f"🔄 Attempting to send admin notification for user {user_id}")
         try:
             admin_text = f"""🔔 New Access Request
 
@@ -1354,10 +1364,15 @@ async def handle_access_request(update: Update, context: ContextTypes.DEFAULT_TY
 
 Please approve or reject this request."""
             
+            logger.info(f"📝 Admin text prepared. Getting request ID for user {user_id}")
+            
             # Get the request ID for the keyboard
             request = await get_pending_request(user_id)
+            logger.info(f"📋 Request data: {request}")
+            
             if request:
                 keyboard = get_admin_approval_keyboard(request['id'])
+                logger.info(f"📤 Sending notification with keyboard to admin {ADMIN_USER_ID}")
                 await context.bot.send_message(
                     chat_id=ADMIN_USER_ID,
                     text=admin_text,
@@ -1366,6 +1381,7 @@ Please approve or reject this request."""
                 logger.info(f"✅ Admin notification sent to {ADMIN_USER_ID} for user {user_id}")
             else:
                 # Send notification without keyboard if no request found
+                logger.info(f"📤 Sending basic notification to admin {ADMIN_USER_ID}")
                 await context.bot.send_message(
                     chat_id=ADMIN_USER_ID,
                     text=admin_text
@@ -1374,13 +1390,16 @@ Please approve or reject this request."""
                 
         except Exception as e:
             logger.error(f"❌ Failed to send admin notification: {e}")
+            logger.error(f"❌ Full error details: {type(e).__name__}: {str(e)}")
             # Try simple fallback notification
             try:
                 simple_text = f"📱 New user: {user_id} - {user.first_name} wants to use the bot"
+                logger.info(f"🔄 Trying fallback notification to {ADMIN_USER_ID}")
                 await context.bot.send_message(chat_id=ADMIN_USER_ID, text=simple_text)
                 logger.info("✅ Fallback admin notification sent")
             except Exception as e2:
                 logger.error(f"❌ Even fallback notification failed: {e2}")
+                logger.error(f"❌ Fallback error details: {type(e2).__name__}: {str(e2)}")
         
         await update.message.reply_text(await get_text(user_id, 'request_sent'))
     else:
