@@ -579,52 +579,33 @@ class TelegramChecker:
             logger.error("Telethon client not initialized")
             return existing_with_info, non_existing
         
-        # Hybrid approach: Direct checking for single numbers, batch for multiple
-        if len(phone_numbers) == 1:
-            # Single number - use accurate method from backup
-            phone = phone_numbers[0]
-            try:
-                formatted_phone = self.format_phone_number(phone)
-                if not formatted_phone:
-                    non_existing.append(phone)
-                else:
-                    logger.info(f"Checking single phone number: {formatted_phone}")
-                    user_info = await self._get_user_info(formatted_phone)
-                    
-                    if user_info:
-                        existing_with_info.append({
-                            'phone': phone,
-                            'formatted_phone': formatted_phone,
-                            'user_id': user_info.get('user_id'),
-                            'first_name': user_info.get('first_name', ''),
-                            'last_name': user_info.get('last_name', ''),
-                            'username': user_info.get('username', '')
-                        })
-                        logger.info(f"✅ Found user: {formatted_phone} -> ID: {user_info.get('user_id')}")
-                    else:
-                        non_existing.append(phone)
-                        logger.info(f"❌ Not found: {formatted_phone}")
-            except Exception as e:
-                logger.error(f"Error checking phone {phone}: {e}")
-                non_existing.append(phone)
-        else:
-            # Multiple numbers - use optimized batch processing
-            from telethon.tl.functions.contacts import ImportContactsRequest, DeleteContactsRequest
-            from telethon.tl.types import InputPhoneContact
-            from telethon.errors import FloodWaitError
-            import time
+        # Optimized batch processing for up to 100 numbers with enhanced accuracy
+        from telethon.tl.functions.contacts import ImportContactsRequest, DeleteContactsRequest
+        from telethon.tl.types import InputPhoneContact
+        from telethon.errors import FloodWaitError
+        import time
+        
+        # Process in smaller batches for better accuracy
+        batch_size = 25  # Smaller batches for better accuracy
+        total_numbers = len(phone_numbers)
+        
+        for batch_start in range(0, total_numbers, batch_size):
+            batch_end = min(batch_start + batch_size, total_numbers)
+            batch_numbers = phone_numbers[batch_start:batch_end]
             
-            # Prepare all contacts at once
+            logger.info(f"Processing batch {batch_start//batch_size + 1}/{(total_numbers + batch_size - 1)//batch_size}: {len(batch_numbers)} numbers")
+            
+            # Prepare contacts for this batch
             contacts = []
-            phone_map = {}  # client_id to original_phone mapping
+            phone_map = {}
             
-            for i, phone in enumerate(phone_numbers):
+            for i, phone in enumerate(batch_numbers):
                 formatted_phone = self.format_phone_number(phone)
                 if not formatted_phone:
                     non_existing.append(phone)
                     continue
                 
-                client_id = int(time.time() * 1000 + i) % 2147483647
+                client_id = int(time.time() * 1000 + batch_start + i) % 2147483647
                 contact = InputPhoneContact(
                     client_id=client_id,
                     phone=formatted_phone.replace('+', ''),
@@ -634,90 +615,133 @@ class TelegramChecker:
                 contacts.append(contact)
                 phone_map[client_id] = (phone, formatted_phone)
             
-            if contacts:
-                try:
-                    logger.info(f"Batch importing {len(contacts)} contacts...")
-                    result = await self.client(ImportContactsRequest(contacts))
-                    
-                    imported_users = result.users if result and result.users else []
-                    
-                    # Process found users
-                    for user in imported_users:
-                        if hasattr(user, 'id') and user.id:
-                            # Find matching phone by checking all client_ids
-                            matched_phone = None
-                            matched_formatted = None
-                            
-                            # Check if user has client_id attribute
-                            if hasattr(user, 'client_id') and user.client_id in phone_map:
-                                matched_phone, matched_formatted = phone_map[user.client_id]
-                            else:
-                                # Fallback: match by phone number
-                                user_phone = getattr(user, 'phone', '')
-                                for client_id, (orig_phone, formatted_phone) in phone_map.items():
-                                    if user_phone in formatted_phone.replace('+', '') or formatted_phone.replace('+', '') in user_phone:
-                                        matched_phone, matched_formatted = orig_phone, formatted_phone
-                                        break
-                            
-                            if matched_phone:
+            if not contacts:
+                continue
+                
+            try:
+                # Import batch
+                result = await self.client(ImportContactsRequest(contacts))
+                imported_users = result.users if result and result.users else []
+                
+                # Enhanced matching with multiple strategies
+                processed_phones = set()
+                
+                # Strategy 1: Direct client_id matching
+                for user in imported_users:
+                    if hasattr(user, 'id') and user.id and hasattr(user, 'client_id'):
+                        if user.client_id in phone_map:
+                            orig_phone, formatted_phone = phone_map[user.client_id]
+                            if orig_phone not in processed_phones:
                                 existing_with_info.append({
-                                    'phone': matched_phone,
-                                    'formatted_phone': matched_formatted,
+                                    'phone': orig_phone,
+                                    'formatted_phone': formatted_phone,
                                     'user_id': user.id,
                                     'first_name': getattr(user, 'first_name', ''),
                                     'last_name': getattr(user, 'last_name', ''),
                                     'username': getattr(user, 'username', '')
                                 })
-                                logger.info(f"✅ Found: {matched_formatted} -> ID: {user.id}")
-                                # Remove from phone_map so it's not marked as not found
-                                phone_map = {k: v for k, v in phone_map.items() if v[0] != matched_phone}
-                    
-                    # Add remaining as not found
-                    for client_id, (orig_phone, formatted_phone) in phone_map.items():
+                                processed_phones.add(orig_phone)
+                                logger.info(f"✅ Found (direct): {formatted_phone} -> ID: {user.id}")
+                
+                # Strategy 2: Phone number matching for unmatched users
+                for user in imported_users:
+                    if hasattr(user, 'id') and user.id:
+                        user_phone = getattr(user, 'phone', '')
+                        if user_phone:
+                            for client_id, (orig_phone, formatted_phone) in phone_map.items():
+                                if orig_phone not in processed_phones:
+                                    # Clean phone numbers for comparison
+                                    clean_user_phone = user_phone.replace('+', '').replace('-', '').replace(' ', '')
+                                    clean_formatted = formatted_phone.replace('+', '').replace('-', '').replace(' ', '')
+                                    
+                                    # Check if numbers match (last 10 digits at least)
+                                    if len(clean_user_phone) >= 10 and len(clean_formatted) >= 10:
+                                        if clean_user_phone[-10:] == clean_formatted[-10:] or clean_formatted[-10:] == clean_user_phone[-10:]:
+                                            existing_with_info.append({
+                                                'phone': orig_phone,
+                                                'formatted_phone': formatted_phone,
+                                                'user_id': user.id,
+                                                'first_name': getattr(user, 'first_name', ''),
+                                                'last_name': getattr(user, 'last_name', ''),
+                                                'username': getattr(user, 'username', '')
+                                            })
+                                            processed_phones.add(orig_phone)
+                                            logger.info(f"✅ Found (phone match): {formatted_phone} -> ID: {user.id}")
+                                            break
+                
+                # Add unprocessed phones as not found
+                for client_id, (orig_phone, formatted_phone) in phone_map.items():
+                    if orig_phone not in processed_phones:
                         non_existing.append(orig_phone)
                         logger.info(f"❌ Not found: {formatted_phone}")
-                    
-                    # Cleanup imported contacts
-                    if imported_users:
-                        try:
-                            await self.client(DeleteContactsRequest(imported_users))
-                            logger.info(f"Cleaned up {len(imported_users)} imported contacts")
-                        except Exception as e:
-                            logger.warning(f"Cleanup failed: {e}")
                 
-                except FloodWaitError as e:
-                    logger.warning(f"Flood wait: {e.seconds} seconds - falling back to individual checks")
-                    # Fallback to individual checking with delay
-                    for phone in phone_numbers:
-                        try:
-                            formatted_phone = self.format_phone_number(phone)
-                            if not formatted_phone:
-                                non_existing.append(phone)
-                                continue
-                            
-                            user_info = await self._get_user_info(formatted_phone)
-                            if user_info:
-                                existing_with_info.append({
-                                    'phone': phone,
-                                    'formatted_phone': formatted_phone,
-                                    'user_id': user_info.get('user_id'),
-                                    'first_name': user_info.get('first_name', ''),
-                                    'last_name': user_info.get('last_name', ''),
-                                    'username': user_info.get('username', '')
-                                })
-                            else:
-                                non_existing.append(phone)
-                            
-                            await asyncio.sleep(3)  # Delay to avoid further flood waits
-                        except Exception as e:
-                            logger.error(f"Error checking {phone}: {e}")
+                # Cleanup imported contacts
+                if imported_users:
+                    try:
+                        await self.client(DeleteContactsRequest(imported_users))
+                        logger.info(f"Cleaned up {len(imported_users)} contacts from batch")
+                    except Exception as e:
+                        logger.warning(f"Cleanup failed for batch: {e}")
+                
+                # Small delay between batches to avoid overwhelming the API
+                if batch_end < total_numbers:
+                    await asyncio.sleep(1)
+                
+            except FloodWaitError as e:
+                logger.warning(f"Flood wait: {e.seconds} seconds - using individual fallback for batch")
+                # Fallback to individual checking for this batch
+                for phone in batch_numbers:
+                    try:
+                        formatted_phone = self.format_phone_number(phone)
+                        if not formatted_phone:
                             non_existing.append(phone)
-                
-                except Exception as e:
-                    logger.error(f"Batch import failed: {e}")
-                    # Fallback: mark all as not found
-                    for client_id, (orig_phone, _) in phone_map.items():
-                        non_existing.append(orig_phone)
+                            continue
+                        
+                        user_info = await self._get_user_info(formatted_phone)
+                        if user_info:
+                            existing_with_info.append({
+                                'phone': phone,
+                                'formatted_phone': formatted_phone,
+                                'user_id': user_info.get('user_id'),
+                                'first_name': user_info.get('first_name', ''),
+                                'last_name': user_info.get('last_name', ''),
+                                'username': user_info.get('username', '')
+                            })
+                        else:
+                            non_existing.append(phone)
+                        
+                        await asyncio.sleep(2)  # Delay to avoid further flood waits
+                    except Exception as e:
+                        logger.error(f"Error checking {phone}: {e}")
+                        non_existing.append(phone)
+            
+            except Exception as e:
+                logger.error(f"Batch import failed: {e}")
+                # Fallback: individual checking for this batch
+                for phone in batch_numbers:
+                    try:
+                        formatted_phone = self.format_phone_number(phone)
+                        if not formatted_phone:
+                            non_existing.append(phone)
+                            continue
+                        
+                        user_info = await self._get_user_info(formatted_phone)
+                        if user_info:
+                            existing_with_info.append({
+                                'phone': phone,
+                                'formatted_phone': formatted_phone,
+                                'user_id': user_info.get('user_id'),
+                                'first_name': user_info.get('first_name', ''),
+                                'last_name': user_info.get('last_name', ''),
+                                'username': user_info.get('username', '')
+                            })
+                        else:
+                            non_existing.append(phone)
+                        
+                        await asyncio.sleep(1)
+                    except Exception as e:
+                        logger.error(f"Error in fallback checking {phone}: {e}")
+                        non_existing.append(phone)
         
         results = []  # For compatibility with existing code
         
@@ -1183,6 +1207,21 @@ async def check_phone_numbers(update: Update, context: ContextTypes.DEFAULT_TYPE
     if not phone_numbers:
         await update.message.reply_text(await get_text(user_id, 'invalid_numbers'))
         return
+    
+    # Check if more than 100 numbers - add limit warning
+    if len(phone_numbers) > 100:
+        lang = await get_user_language(user_id)
+        if lang == 'bn':
+            warning_text = f"⚠️ সর্বোচ্চ ১০০টি নাম্বার একসাথে চেক করা যায়। আপনি {len(phone_numbers)}টি দিয়েছেন।\n\n🔢 প্রথম ১০০টি নাম্বার চেক করা হবে।"
+        elif lang == 'hi':
+            warning_text = f"⚠️ अधिकतम 100 नंबर एक साथ चेक कर सकते हैं। आपने {len(phone_numbers)} दिए हैं।\n\n🔢 पहले 100 नंबर चेक किए जाएंगे।"
+        elif lang == 'ar':
+            warning_text = f"⚠️ يمكن فحص 100 رقم كحد أقصى في المرة الواحدة. لقد أرسلت {len(phone_numbers)} رقماً।\n\n🔢 سيتم فحص أول 100 رقم।"
+        else:  # English
+            warning_text = f"⚠️ Maximum 100 numbers can be checked at once. You sent {len(phone_numbers)} numbers.\n\n🔢 First 100 numbers will be checked."
+        
+        await update.message.reply_text(warning_text)
+        phone_numbers = phone_numbers[:100]  # Limit to first 100 numbers
     
     # Send processing message
     processing_msg = await update.message.reply_text(
